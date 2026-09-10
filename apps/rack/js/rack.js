@@ -365,7 +365,7 @@
       const headBindings = [
         ['app', 'change', () => { changeSlotApp(s, q('app').value); }],
         ['div', 'change', () => { s.div = parseInt(q('div').value, 10) || 1; }],
-        ['muted', 'change', () => { s.muted = q('muted').checked; if (s.muted) s.silence(); }],
+        ['muted', 'change', () => { s.muted = q('muted').checked; if (s.muted) s.silence(); setCellName(s); }],
       ];
       for (const [k, ev, fn] of bindings.concat(headBindings)) {
         const el = q(k);
@@ -652,7 +652,7 @@
         ['accvel', 'input', () => { M.accentVel = parseInt(q('accvel').value, 10); }],
         ['app', 'change', () => { changeSlotApp(s, q('app').value); }],
         ['div', 'change', () => { s.div = parseInt(q('div').value, 10) || 1; }],
-        ['muted', 'change', () => { s.muted = q('muted').checked; if (s.muted) s.silence(); }],
+        ['muted', 'change', () => { s.muted = q('muted').checked; if (s.muted) s.midiSilence(); setCellName(s); }],
       ];
       for (const [k, ev, fn] of bindings) {
         const el = q(k);
@@ -814,11 +814,14 @@
       s.cell.classList.toggle('selected', s.index === rack.selected);
       s.cell.classList.toggle('empty', !s.app);
       s.controls.classList.toggle('selected', s.index === rack.selected);
+      setCellName(s);
     }
   }
 
   function setCellName(s) {
-    s.cell.querySelector('.cell-name').textContent = s.app ? (s.index + 1 + ': ' + s.name) : '— empty —';
+    s.cell.querySelector('.cell-name').textContent = s.app
+      ? (s.index + 1 + ': ' + s.name + (s.muted ? ' · muted' : ''))
+      : '— empty —';
   }
 
   // ==================================================================
@@ -1071,5 +1074,5 @@
   boot();
 
   // test surface
-  window.RackSlots = { createSlot, rack, doClock, clockBase };
+  window.RackSlots = { createSlot, rack, doClock, clockBase, selectSlot, setCellName };
 })();

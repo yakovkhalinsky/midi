@@ -138,8 +138,11 @@ check('drummap OLED rendered in cell', dm.cell.oledCtx.getImageData(32, 32, 1, 1
   const fresh = RackSlots.createSlot(2, 'drummap');
   fresh.div = empty.div; fresh.muted = empty.muted;
   rack.slots[2] = fresh;
+  RackSlots.selectSlot(0);
   const cellCount1 = document.querySelectorAll('.cell-oled').length;
   check('slot swap keeps one cell per slot', cellCount0 === cellCount1, cellCount0 + '->' + cellCount1);
+  check('cell name updates on app change', fresh.cell.querySelector('.cell-name').textContent === '3: DrumMap',
+    fresh.cell.querySelector('.cell-name').textContent);
 }
 
 function finish() {
