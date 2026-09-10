@@ -1042,7 +1042,9 @@
   function boot() {
     rack.midiOut = new MidiOut(() => (rack.audioCtx ? rack.audioCtx.currentTime : undefined));
     const d = loadConfig();
-    const slotsCfg = Array.isArray(d.slots) ? d.slots : [];
+    const slotsCfg = Array.isArray(d.slots) && d.slots.some((s) => s && s.app)
+      ? d.slots
+      : [{ app: 'tb3po' }, {}, {}];   // fresh visitors: slot 1 starts with TB-3PO
     for (let i = 0; i < 3; i++) {
       const sd = slotsCfg[i] || {};
       const app = (sd.app === 'tb3po' || sd.app === 'drummap') ? sd.app : null;
