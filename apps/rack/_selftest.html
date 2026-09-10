@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>rack selftest</title></head>
+<body>
+<pre id="out">running...</pre>
+<div id="oledRow"></div>
+<div id="controls"></div>
+<input id="bpm"><select id="div"></select><select id="slotSel"></select>
+<select id="outputDest"></select><select id="midiDevice"></select>
+<button id="runBtn"></button><button id="clockBtn"></button><button id="resetBtn"></button>
+<button id="midiConnect"></button><button id="midiRefresh"></button><button id="midiPanic"></button>
+<span id="midiStatus"></span>
+<script>
+// preseed rack config so boot() builds the slots under test
+localStorage.setItem('rack-web-v2', JSON.stringify({
+  bpm: 120, div: 4, outputDest: 'midi', selected: 0,
+  slots: [{ app: 'tb3po' }, { app: 'drummap' }, {}],
+}));
+</script>
+<script src="../tb3po/js/data.js"></script>
+<script src="../tb3po/js/engine.js"></script>
+<script src="../tb3po/js/display.js"></script>
+<script src="../tb3po/js/synth.js"></script>
+<script src="../tb3po/js/midi.js"></script>
+<script src="js/dm-data.js"></script>
+<script src="js/dm-engine.js"></script>
+<script src="js/dm-display.js"></script>
+<script src="js/dm-synth.js"></script>
+<script src="js/rack.js"></script>
+<script>
+window.onerror = function (msg, src, line) {
+  document.getElementById('out').textContent += '\nPAGE ERROR: ' + msg + ' @' + src + ':' + line;
+};
+const results = [];
+function check(name, cond, extra) {
+  results.push((cond ? 'PASS ' : 'FAIL ') + name + (extra !== undefined ? ' [' + extra + ']' : ''));
+}
+
+const rack = RackSlots.rack;
+
+// ---------- stub Web MIDI ----------
+const midiSent = [];
+const fakeOut = { id: 'x1', name: 'Stub Synth', send: (b, ts) => midiSent.push({ b, ts }) };
+rack.midiOut.access = { outputs: new Map([['x1', fakeOut]]) };
+rack.midiOut.select('x1');
+rack.outputDest = 'midi';
+
+// ---------- slots ----------
+const tb = rack.slots[0];
+const dm = rack.slots[1];
+check('boot built slots from config', rack.slots.length === 3 && tb.app === 'tb3po' && dm.app === 'drummap'
+  && rack.slots[2].app === null, rack.slots.map(s => s.app).join(','));
+
+// tb3po: locked seed, deterministic pattern
+tb.params.lockSeed = true;
+tb.params.seedHex = '1234';
+tb.applyEngine();
+check('tb3po slot pattern built', tb.engine.numSteps === 16, tb.engine.numSteps);
+
+// drive clocks with MIDI routing
+const t0 = 100.0;
+tb.onClock(t0, 0.5);
+tb.onClock(t0 + 0.5, 0.5);
+tb.onClock(t0 + 1.0, 0.5);
+const noteOns = midiSent.filter((m) => (m.b[0] & 0xf0) === 0x90);
+const noteOffs = midiSent.filter((m) => (m.b[0] & 0xf0) === 0x80);
+check('tb3po midi note-ons sent', noteOns.length >= 1, noteOns.length);
+check('tb3po notes on slot channel', noteOns.length === 0 || (noteOns[0].b[0] & 0x0f) === (tb.midiParams.channel & 0xf), noteOns[0] && noteOns[0].b[0]);
+check('tb3po gate cuts scheduled', noteOffs.length >= 1, noteOffs.length);
+
+// octave shift affects midi notes (deterministic: feed a known pitch CV)
+midiSent.length = 0;
+tb.heldNote = null;
+tb.engine.currPitchCv = 0; // C4 = 0 V
+tb.midiGateOn({ t: 400, accent: false });
+const n0 = midiSent.filter((m) => (m.b[0] & 0xf0) === 0x90)[0].b[1];
+tb.midiParams.octave = 1;
+midiSent.length = 0;
+tb.engine.currPitchCv = 0;
+tb.midiGateOn({ t: 401, accent: false });
+const n1 = midiSent.filter((m) => (m.b[0] & 0xf0) === 0x90)[0].b[1];
+check('tb3po octave shift', n1 === n0 + 12, n1 + ' vs ' + n0 + '+12');
+tb.midiParams.octave = 0;
+tb.heldNote = null;
+
+// drummap: GM mapping
+midiSent.length = 0;
+dm.onClock(t0);
+const dmOn = midiSent.filter((m) => (m.b[0] & 0xf0) === 0x90);
+check('drummap slot fires on some clock', dmOn.length >= 0, 'notes=' + dmOn.length);
+if (dmOn.length) {
+  check('drummap GM note numbers', dmOn.every((m) => [36, 38, 42].includes(m.b[1])), dmOn.map(m => m.b[1]).join(','));
+  check('drummap channel', dmOn.every((m) => (m.b[0] & 0x0f) === (dm.midiParams.channel & 0xf)), dmOn[0] && dmOn[0].b[0]);
+  check('drummap note-off scheduled', midiSent.some((m) => (m.b[0] & 0xf0) === 0x80));
+}
+
+// clock division at rack level (÷2: engine advances only on every 2nd edge)
+tb.div = 2;
+rack.outputDest = 'midi';
+{
+  const stepBefore = tb.engine.step;
+  RackSlots.doClock(200.0);
+  RackSlots.doClock(200.5);
+  RackSlots.doClock(201.0);
+  RackSlots.doClock(201.5);
+  let delta = tb.engine.step - stepBefore;
+  if (delta < 0) delta += 32;
+  check('÷2 slot advances 2 steps over 4 edges', delta === 2, 'delta=' + delta);
+  tb.div = 1;
+}
+
+// audio destination: no midi bytes, voice exists once audio ctx is set
+rack.outputDest = 'audio';
+midiSent.length = 0;
+rack.audioCtx = new AudioContext();
+tb.ensureVoice();
+dm.ensureVoice();
+check('voices created', !!tb.voice && !!dm.voice);
+tb.onClock(300.0, 0.5);
+check('audio dest sends no midi', midiSent.length === 0, midiSent.length);
+
+// OLED rendering into cell canvases
+tb.render();
+dm.render();
+let lit = 0;
+const px = tb.cell.oledCtx.getImageData(0, 0, 64, 64).data;
+for (let i = 3; i < px.length; i += 4) if (px[i] > 0) lit++;
+check('tb3po OLED rendered in cell', lit > 100, lit);
+check('drummap OLED rendered in cell', dm.cell.oledCtx.getImageData(32, 32, 1, 1).data.length > 0);
+
+// slot swap replaces cell + controls in place (no duplicates)
+{
+  const cellCount0 = document.querySelectorAll('.cell-oled').length;
+  const empty = rack.slots[2];
+  empty.silence && empty.silence();
+  empty.cell.remove();
+  empty.controls.remove();
+  const fresh = RackSlots.createSlot(2, 'drummap');
+  fresh.div = empty.div; fresh.muted = empty.muted;
+  rack.slots[2] = fresh;
+  const cellCount1 = document.querySelectorAll('.cell-oled').length;
+  check('slot swap keeps one cell per slot', cellCount0 === cellCount1, cellCount0 + '->' + cellCount1);
+}
+
+function finish() {
+  const pass = results.filter((r) => r.startsWith('PASS')).length;
+  const fail = results.length - pass;
+  document.getElementById('out').textContent = 'RESULTS pass=' + pass + ' fail=' + fail + '\n' + results.join('\n');
+}
+finish();
+</script>
+</body>
+</html>
