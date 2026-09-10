@@ -13,6 +13,8 @@ drum voice (kick / snare / hi-hat, accents louder & brighter).
 
 No build step. Open `index.html` directly, or `python3 -m http.server` in this folder.
 
+**Live:** <https://yakovkhalinsky.github.io/midi/apps/drummap/> (GitHub Pages)
+
 ## Faithful to the hardware
 
 Ported 1:1 from `DrumMap.h` on the Phazerville (Teensy 4.x) build:

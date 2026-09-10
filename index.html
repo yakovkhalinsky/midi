@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>web sequencer ports — Ornament &amp; Crime applets</title>
+  <style>
+    :root { --bg: #0d1117; --panel: #131a23; --ink: #dfe8ef; --dim: #7d8a99; --accent: #7fe3a0; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--ink);
+           font: 15px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+           display: flex; flex-direction: column; align-items: center; padding: 48px 20px; }
+    h1 { font-size: 22px; letter-spacing: 0.04em; margin: 0 0 6px; }
+    p.sub { color: var(--dim); margin: 0 0 36px; font-size: 13.5px; }
+    .cards { display: flex; gap: 20px; flex-wrap: wrap; justify-content: center; max-width: 900px; }
+    a.card { display: block; width: 400px; max-width: 90vw; background: var(--panel);
+             border: 1px solid #232c38; border-radius: 10px; padding: 22px 24px;
+             text-decoration: none; color: var(--ink); transition: border-color 0.15s, transform 0.15s; }
+    a.card:hover { border-color: var(--accent); transform: translateY(-2px); }
+    a.card h2 { margin: 0 0 8px; font-size: 17px; color: var(--accent); }
+    a.card p { margin: 0; color: var(--dim); font-size: 13.5px; }
+    a.card .go { display: inline-block; margin-top: 12px; color: var(--ink); font-size: 13px; letter-spacing: 0.05em; }
+    footer { margin-top: 44px; color: var(--dim); font-size: 12.5px; text-align: center; max-width: 720px; }
+    footer a { color: var(--ink); }
+    .dot { color: var(--accent); }
+  </style>
+</head>
+<body>
+  <h1><span class="dot">●</span> web sequencer ports</h1>
+  <p class="sub">browser ports of Ornament &amp; Crime / Phazerville Hemisphere applets — no build step, all client-side</p>
+
+  <div class="cards">
+    <a class="card" href="apps/tb3po/">
+      <h2>TB-3PO</h2>
+      <p>TB-303-style acid pattern generator. Bit-exact Teensy PRNG, braids quantizer,
+         OLED render, 303-style Web Audio voice — or route the output to a synth over
+         Web MIDI (channel, velocity, accent, portamento).</p>
+      <span class="go">open app →</span>
+    </a>
+    <a class="card" href="apps/drummap/">
+      <h2>DrumMap</h2>
+      <p>Two-channel Grids drum pattern generator: bilinear 5×5 rhythm map, firmware-exact
+         interpolation, Web Audio drum voice (kick / snare / hi-hat) — or trigger a hardware
+         module via Web MIDI.</p>
+      <span class="go">open app →</span>
+    </a>
+  </div>
+
+  <footer>
+    Ports of Phazerville Hemisphere applets by Logarhythm, djphazer, Ben Rosenbach et al.
+    (quantizer &amp; scales by Émilie Gillet / Bryan Head) ·
+    <a href="https://github.com/yakovkhalinsky/midi" target="_blank" rel="noopener">source on GitHub</a>
+  </footer>
+</body>
+</html>

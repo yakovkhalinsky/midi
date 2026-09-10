@@ -19,6 +19,8 @@ python3 -m http.server 8000
 
 or simply open `index.html` directly in a browser (plain `<script>` tags, works over `file://`).
 
+**Live:** <https://yakovkhalinsky.github.io/midi/apps/tb3po/> (GitHub Pages)
+
 ## What is faithful to the hardware
 
 Ported 1:1 from `TB3PO.h` on the Teensy 4.x (`__IMXRT1062__`) build path:
