@@ -81,6 +81,8 @@ select, .midi-wrap select {
   font-size: 12.5px;
 }
 .midi-wrap { display: flex; align-items: center; gap: 7px; margin-left: auto; }
+.dest-wrap { display: flex; align-items: center; gap: 7px; }
+.dest-wrap select { max-width: 130px; }
 .midi-wrap select { max-width: 210px; }
 .small-btn {
   background: #222a35;

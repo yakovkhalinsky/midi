@@ -34,6 +34,13 @@
     </div>
     <button id="clockBtn" class="big-btn tap">CLOCK<span class="hint">space</span></button>
     <button id="resetBtn" class="big-btn tap">RESET<span class="hint">R</span></button>
+    <div class="dest-wrap">
+      <span class="mon-label">OUTPUT</span>
+      <select id="outputDest" title="where every slot sends its output">
+        <option value="audio" selected>Web Audio</option>
+        <option value="midi">MIDI out</option>
+      </select>
+    </div>
     <div class="midi-wrap">
       <span class="mon-label">MIDI</span>
       <select id="midiDevice"></select>

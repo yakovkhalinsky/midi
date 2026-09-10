@@ -34,6 +34,7 @@
   let running = false;
   let bpm = 124;
   let div = 4;                // shared clock: edges per beat (4 = 16ths)
+  let outputDest = 'audio';   // global output: 'audio' | 'midi'
   let nextClockT = 0;
   let edgeIndex = 0;          // increments on every shared edge
   let schedulerTimer = null;
@@ -263,7 +264,7 @@
   function save() {
     try {
       localStorage.setItem(STORE_KEY, JSON.stringify({
-        bpm, div, midiDeviceId,
+        bpm, div, midiDeviceId, outputDest,
         slots: slots.map((s) => ({ app: s.app, div: s.div, muted: s.muted })),
       }));
     } catch (e) { /* storage unavailable */ }
@@ -275,6 +276,7 @@
       bpm = con(d.bpm || 124, 20, 300);
       div = [1, 2, 4, 8].includes(d.div) ? d.div : 4;
       midiDeviceId = d.midiDeviceId || null;
+      outputDest = d.outputDest === 'midi' ? 'midi' : 'audio';
       if (Array.isArray(d.slots)) {
         d.slots.forEach((sd, i) => {
           if (!slots[i]) return;
@@ -292,6 +294,7 @@
   function syncControls() {
     $('bpm').value = bpm;
     $('div').value = String(div);
+    $('outputDest').value = outputDest;
     for (const s of slots) {
       s.appPick.value = s.app || '';
       s.divPick.value = String(s.div);
@@ -317,6 +320,12 @@
     $('midiRefresh').addEventListener('click', () => { ensureMidiAccess().then(refreshMidiDevices); });
     $('midiDevice').addEventListener('change', () => { pushMidiDevice($('midiDevice').value || null); });
     $('midiPanic').addEventListener('click', () => broadcast({ type: 'rack-panic' }));
+    $('outputDest').addEventListener('change', () => {
+      outputDest = $('outputDest').value === 'midi' ? 'midi' : 'audio';
+      broadcast({ type: 'rack-output', dest: outputDest });
+      if (outputDest === 'midi') ensureMidiAccess();
+      saveSoon();
+    });
 
     window.addEventListener('keydown', (e) => {
       const tag = (e.target.tagName || '').toLowerCase();
@@ -334,6 +343,9 @@
           s.el.classList.add('loaded');
           s.stateEl.textContent = '● ' + (m.app || s.app);
           s.stateEl.classList.add('on');
+          // bring the slot up to date with the rack state
+          postTo(s, { type: 'rack-run', on: running });
+          postTo(s, { type: 'rack-output', dest: outputDest });
         }
       } else if (m.type === 'rack-key') {
         if (m.code === 'Space') tapClock();

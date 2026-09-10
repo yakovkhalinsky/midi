@@ -756,6 +756,9 @@
   /* ---- rack slot mode (?slot=1): transport driven by the parent rack ---- */
   function initSlotMode() {
     document.body.classList.add('slot-mode');
+    // the rack controls the destination globally — this select is display-only here
+    $('outputDest').disabled = true;
+    $('outputDest').title = 'controlled by the rack output selector';
     const reply = (msg) => { try { parent.postMessage(msg, '*'); } catch (e) { /* not framed */ } };
     reply({ type: 'rack-ready', app: 'tb3po' });
     window.addEventListener('message', (ev) => {
@@ -782,6 +785,12 @@
         if (voice) voice.allOff();
         if (outputDest === 'midi') midiSeq.silence();
         flashMidiLed();
+      } else if (m.type === 'rack-output') {
+        // global rack routing: set without persisting (the rack remembers it)
+        if (m.dest === 'audio' || m.dest === 'midi') {
+          outputDest = m.dest;
+          applyOutputDest();
+        }
       } else if (m.type === 'rack-midi-enable') {
         ensureMidiAccess();
       }

@@ -29,6 +29,8 @@
   const midiOut = new MidiOut(() => (audioCtx ? audioCtx.currentTime : undefined));
   const midi = { deviceId: null, channel: 9, velocity: 100, accentVel: 127 }; // ch 9 = MIDI channel 10 (GM drums)
   const GM_DRUM_NOTE = [36, 38, 42];
+  let slotDest = 'audio';     // slot mode: global rack routing ('audio' | 'midi');
+                              // standalone keeps the additive behavior (audio + MIDI when enabled)
 
   // synth params — source of truth until the voice exists
   const synth = {
@@ -75,8 +77,10 @@
 
   function doClock(t) {
     const events = engine.onClock(t);
-    if (voice) for (const e of events) voice.hit(e);
-    if (midiOut.output) {
+    const audioOn = !SLOT_MODE || slotDest === 'audio';
+    const midiOn = midiOut.output && (!SLOT_MODE || slotDest === 'midi');
+    if (voice && audioOn) for (const e of events) voice.hit(e);
+    if (midiOn) {
       for (const e of events) {
         const note = GM_DRUM_NOTE[e.part] || 36;
         const vel = con(e.accent ? midi.accentVel : midi.velocity, 1, 127);
@@ -592,6 +596,9 @@
         if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
       } else if (m.type === 'rack-panic') {
         midiOut.allOff();
+      } else if (m.type === 'rack-output') {
+        // global rack routing: 'audio' = voice only, 'midi' = triggers only
+        if (m.dest === 'audio' || m.dest === 'midi') slotDest = m.dest;
       } else if (m.type === 'rack-midi-enable') {
         ensureMidiAccess();
       }
