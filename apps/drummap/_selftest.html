@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>drummap selftest</title></head>
+<body>
+<pre id="out">running...</pre>
+<script src="js/data.js"></script>
+<script src="js/engine.js"></script>
+<script src="js/display.js"></script>
+<script src="js/synth.js"></script>
+<script>
+window.onerror = function (msg, src, line) {
+  document.getElementById('out').textContent += '\nPAGE ERROR: ' + msg + ' @' + src + ':' + line;
+};
+const results = [];
+function check(name, cond, extra) {
+  results.push((cond ? 'PASS ' : 'FAIL ') + name + (extra !== undefined ? ' [' + extra + ']' : ''));
+}
+
+// ---------- ReadDrumMap corner exactness: x=0,y=0 -> top-left node, part 0, step 0 ----------
+const e = new DrumMap();
+e.patternSet = 'classic';
+const set = PATTERN_SETS.classic;
+// exact expectation, replicating the firmware's double U8Mix quantization:
+// a=corner -> ab=(a*255)>>8, final=(ab*255)>>8
+const nodeA = set.offsets[set.map[0][0]];
+const cornerMix = (((set.data[nodeA] * 255) >> 8) * 255) >> 8;
+check('readDrumMap corner (double U8Mix, firmware-exact)', e.readDrumMap(0, 0, 0, 0) === cornerMix, cornerMix);
+
+// bilinear: x=64*4/... x=64 lands exactly on quadrant i=1 start -> quadX = (64<<2)&255 = 0 -> equals map[1][j]
+const at64 = e.readDrumMap(0, 0, 64, 0);
+const n1 = set.data[set.offsets[set.map[1][0]] + 0];
+check('x=64 exact quadrant', Math.abs(at64 - n1) <= 2, at64 + ' vs ' + n1);
+
+// midpoint interpolation between two quadrants at x=32 (quadX=128): average (rounded >> 8)
+const q0 = e.readDrumMap(0, 0, 0, 0), q1 = e.readDrumMap(0, 0, 32, 0), q2 = e.readDrumMap(0, 0, 64, 0);
+check('bilinear fade between corners', (q1 >= Math.min(q0, q2) - 2) && (q1 <= Math.max(q0, q2) + 2), q0 + ' -> ' + q1 + ' -> ' + q2);
+
+// range
+let mn = 255, mx = 0;
+for (let x = 0; x <= 255; x += 5) for (let y = 0; y <= 255; y += 5) for (let part = 0; part < 3; part++) {
+  const v = e.readDrumMap((x + y) % 32, part, x, y);
+  if (v < mn) mn = v; if (v > mx) mx = v;
+}
+check('levels within 0..255', mn >= 0 && mx <= 255, mn + '..' + mx);
+
+// ---------- triggers ----------
+e.patternSet = 'grids2';
+e.fill = [255, 255]; // ~fill = 0 -> everything above 0 fires
+e.chaos = 0; e.refreshModulation();
+e.reset();
+const evs = [];
+for (let i = 0; i < 32; i++) evs.push(...e.onClock(0.05 * (i + 1)));
+check('clocks advance 32 steps', e.step === 0 && evs.length > 0, evs.length + ' hits, wrapped to ' + e.step);
+check('chaos re-rolled at step 0', e.randomness[0] === arduinoRange(0)); // chaos 0 -> always 0
+
+// accent mode: B plays A's part, fires only above 192
+e.mode = [0, 3]; e.fill = [255, 128]; e.chaos = 0; e.refreshModulation(); e.reset();
+const evs2 = [];
+for (let i = 0; i < 32; i++) evs2.push(...e.onClock(0.02 * (i + 1)));
+const bHits = evs2.filter(x => x.ch === 1);
+check('accent mode uses A part + high-level gate', bHits.length > 0 && bHits.every(x => x.part === 0 && x.accent), bHits.length + ' B accent hits, ' + evs2.length + ' total');
+
+// fill 255 -> threshold 0 -> very dense
+e.mode = [0, 1]; e.fill = [255, 255]; e.refreshModulation(); e.reset();
+const evs3 = [];
+for (let i = 0; i < 32; i++) evs3.push(...e.onClock(0.02 * (i + 1)));
+check('full fill fires almost everything', evs3.length > 56, evs3.length + ' of 64');
+// fill 0 -> threshold 255 -> nothing
+e.fill = [0, 0]; e.refreshModulation(); e.reset();
+const evs4 = [];
+for (let i = 0; i < 32; i++) evs4.push(...e.onClock(0.02 * (i + 1)));
+check('fill 0 = silence', evs4.length === 0, evs4.length + ' hits');
+
+// ---------- auto-reset ----------
+const e5 = new DrumMap();
+e5.lastClock = 0; e5.step = 17;
+e5.update(2.0, 0.01); // 2s > 1.76s since last clock
+check('auto-reset after ~1.76s without clock', e5.step === 0, 'step ' + e5.step);
+
+// ---------- OLED ----------
+const ol = new OLED();
+drawDrumMap(ol, e5, DCUR.X);
+let lit = 0; for (let i = 0; i < ol.buf.length; i++) lit += ol.buf[i];
+check('OLED has content', lit > 60, lit);
+// 'A' and 'B' labels at (1,15) and (32,15)
+const gA = fontGlyph('A'.charCodeAt(0));
+let aOK = true;
+for (let c = 0; c < 6; c++) for (let r = 0; r < 8; r++) {
+  const want = (gA[c] >>> r) & 1;
+  if (!!ol.buf[(15 + r) * 64 + 1 + c] !== !!want) aOK = false;
+}
+check('part label A pixel-exact', aOK);
+
+// cursor invert changes pixels
+const olB = new OLED(); drawDrumMap(olB, e5, DCUR.NONE);
+const olC = new OLED(); drawDrumMap(olC, e5, DCUR.CHAOS);
+let diff = 0;
+for (let i = 0; i < ol.buf.length; i++) if (olB.buf[i] !== olC.buf[i]) diff++;
+check('cursor overlay', diff > 0, diff);
+
+// ---------- drum synth through OfflineAudioContext ----------
+async function synthTest() {
+  try {
+    const sr = 44100;
+    const oc = new OfflineAudioContext(1, Math.floor(sr * 0.9), sr);
+    const v = new DrumVoice(oc);
+    v.params.volume = 0.5;
+    v.hit({ t: 0.01, part: 0, accent: false });   // kick
+    v.hit({ t: 0.15, part: 1, accent: false });   // snare
+    v.hit({ t: 0.25, part: 2, accent: false });   // hat
+    v.hit({ t: 0.32, part: 0, accent: true });    // accent kick
+    const buf = await oc.startRendering();
+    const d = buf.getChannelData(0);
+    let peak = 0, late = 0;
+    for (let i = 0; i < d.length; i++) { const a = Math.abs(d[i]); if (a > peak) peak = a; }
+    for (let i = Math.floor(sr * 0.8); i < d.length; i++) late = Math.max(late, Math.abs(d[i]));
+    check('drum voice renders audio', peak > 0.05, 'peak ' + peak.toFixed(3));
+    check('one-shots decay to silence', late < 0.02, 'late ' + late.toFixed(4));
+  } catch (err) {
+    results.push('FAIL synth test threw: ' + err);
+  }
+  finish();
+}
+
+function finish() {
+  const pass = results.filter(r => r.startsWith('PASS')).length;
+  const fail = results.length - pass;
+  document.getElementById('out').textContent =
+    'RESULTS pass=' + pass + ' fail=' + fail + '\n' + results.join('\n') + '\nOLED:\n' + oledArt();
+}
+
+function oledArt() {
+  const olA = new OLED();
+  drawDrumMap(olA, e5, DCUR.NONE);
+  let art = '';
+  for (let y = 0; y < 64; y++) { art += '\n'; for (let x = 0; x < 64; x++) art += olA.buf[y * 64 + x] ? '#' : '.'; }
+  return art;
+}
+
+synthTest();
+</script>
+</body>
+</html>

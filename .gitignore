@@ -1,0 +1,2 @@
+# machine-specific dev scaffolding (hardcoded paths, self-signed certs)
+apps/.https-server.py

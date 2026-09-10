@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DrumMap — Web Edition (Phazerville Hemisphere applet)</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <canvas id="logoIcon" width="8" height="8"></canvas>
+    <div class="title">
+      <h1>DrumMap <span class="sub">— web edition</span></h1>
+      <p>A browser port of the <a href="https://github.com/djphazer/O_C-Phazerville/blob/main/software/src/applets/DrumMap.h" target="_blank" rel="noopener">DrumMap Hemisphere applet</a> (Ornament &amp; Crime / Phazerville, by Ben Rosenbach) — a 2-channel port of Mutable Instruments' <a href="https://mutable-instruments.net/modules/grids/" target="_blank" rel="noopener">Grids</a>. Traverse the rhythm map with X/Y, dial in fills and chaos.</p>
+    </div>
+  </header>
+
+  <main>
+    <!-- ===================== OLED + transport ===================== -->
+    <section class="panel left">
+      <div class="oled-bezel">
+        <canvas id="oled" width="64" height="64"></canvas>
+      </div>
+      <div class="oled-caption">128×64 OLED · Hemisphere quadrant · 32nd-note clock (8 ppqn)</div>
+
+      <div class="transport">
+        <button id="runBtn" class="big-btn on-ready">RUN</button>
+        <div class="bpm-wrap">
+          <label for="bpm">BPM</label>
+          <input id="bpm" type="number" min="20" max="300" step="1" value="120">
+          <select id="div" title="clock steps per beat — DrumMap expects 1/32">
+            <option value="1">1/4</option>
+            <option value="2">1/8</option>
+            <option value="4">1/16</option>
+            <option value="8" selected>1/32</option>
+          </select>
+        </div>
+        <button id="clockBtn" class="big-btn tap">CLOCK<span class="hint">space</span></button>
+        <button id="resetBtn" class="big-btn tap">RESET<span class="hint">R</span></button>
+      </div>
+
+      <div class="monitor">
+        <div class="led-wrap"><span class="led amber" id="chALed"></span><span class="led-label" id="chA">KICK</span></div>
+        <div class="led-wrap"><span class="led amber2" id="chBLed"></span><span class="led-label" id="chB">SNARE</span></div>
+        <div class="mon-item"><span class="mon-label" id="stepLabel">step 1/32</span></div>
+      </div>
+
+      <div class="strip-wrap">
+        <canvas id="strip" width="488" height="64"></canvas>
+        <div class="strip-caption">32-step loop — row 1: channel A, row 2: channel B (level bars, green underline = trigger)</div>
+      </div>
+    </section>
+
+    <!-- ===================== parameters ===================== -->
+    <section class="panel right">
+      <div class="group">
+        <h2>Channels</h2>
+        <div class="row">
+          <label for="partA">A</label>
+          <select id="partA">
+            <option value="0">Kick</option>
+            <option value="1">Snare</option>
+            <option value="2">HiHat</option>
+          </select>
+          <label for="partB">B</label>
+          <select id="partB">
+            <option value="0">Kick</option>
+            <option value="1">Snare</option>
+            <option value="2">HiHat</option>
+            <option value="3">Accent</option>
+          </select>
+        </div>
+        <div class="row" id="fillBSlider">
+          <label class="grow" for="fillB">fill B <span id="fillBVal" class="val">128</span> <span id="fillBNote" class="tip inline"></span></label>
+          <input id="fillB" type="range" min="0" max="255" step="1" value="128">
+        </div>
+      </div>
+
+      <div class="group">
+        <h2>Map</h2>
+        <div class="row">
+          <label class="grow" for="fillA">fill A <span id="fillAVal" class="val">128</span></label>
+          <input id="fillA" type="range" min="0" max="255" step="1" value="128">
+        </div>
+        <div class="row">
+          <label class="grow" for="xpos">X <span id="xVal" class="val">0</span></label>
+          <input id="xpos" type="range" min="0" max="255" step="1" value="0">
+        </div>
+        <div class="row">
+          <label class="grow" for="ypos">Y <span id="yVal" class="val">0</span></label>
+          <input id="ypos" type="range" min="0" max="255" step="1" value="0">
+        </div>
+        <div class="row">
+          <label class="grow" for="chaos">chaos <span id="chaosVal" class="val">0</span></label>
+          <input id="chaos" type="range" min="0" max="255" step="1" value="0">
+        </div>
+        <p class="tip">X/Y traverse the 5×5 map of rhythms (bilinear fade between cells, like Grids). Fill = probability gate: high fill → sparse, low fill → dense. Chaos re-rolls level jitter every loop.</p>
+      </div>
+
+      <div class="group">
+        <h2>CV inputs</h2>
+        <div class="row">
+          <label for="cvMode">assign</label>
+          <select id="cvMode">
+            <option value="0">Fill A / Fill B</option>
+            <option value="1">X / Y</option>
+            <option value="2">Fill A / Chaos</option>
+          </select>
+        </div>
+        <div class="row">
+          <label class="grow" for="cv1">CV 1 <span id="cv1Val" class="val">0.0 V</span></label>
+          <input id="cv1" type="range" min="-255" max="255" step="1" value="0">
+        </div>
+        <div class="row">
+          <label class="grow" for="cv2">CV 2 <span id="cv2Val" class="val">0.0 V</span></label>
+          <input id="cv2" type="range" min="-255" max="255" step="1" value="0">
+        </div>
+      </div>
+
+      <div class="group">
+        <h2>Patterns</h2>
+        <div class="row">
+          <label for="patternSet">table</label>
+          <select id="patternSet">
+            <option value="grids2" selected>Grids 2 (Phazerville default)</option>
+            <option value="classic">Grids (original MI)</option>
+          </select>
+        </div>
+        <p class="tip">Grids2 = the alternate pattern table shipped with Phazerville's default build (DRUMMAP_GRIDS2). Classic = the original Mutable Instruments patterns.</p>
+      </div>
+
+      <div class="group">
+        <h2>Voice <span class="sub">(web addition — hardware outputs triggers)</span></h2>
+        <div class="row"><label class="grow" for="vol">volume <span id="volVal" class="val">50%</span></label><input id="vol" type="range" min="0" max="1" step="0.01" value="0.5"></div>
+        <div class="row"><label class="grow" for="kickPitch">kick pitch <span id="kickPitchVal" class="val">155 Hz</span></label><input id="kickPitch" type="range" min="90" max="260" step="1" value="155"></div>
+        <div class="row"><label class="grow" for="kickDecay">kick decay <span id="kickDecayVal" class="val">220 ms</span></label><input id="kickDecay" type="range" min="0.05" max="0.5" step="0.01" value="0.22"></div>
+        <div class="row"><label class="grow" for="snareTone">snare tone <span id="snareToneVal" class="val">1800 Hz</span></label><input id="snareTone" type="range" min="800" max="3600" step="50" value="1800"></div>
+        <div class="row"><label class="grow" for="hatDecay">hat decay <span id="hatDecayVal" class="val">50 ms</span></label><input id="hatDecay" type="range" min="0.01" max="0.2" step="0.005" value="0.05"></div>
+        <div class="row"><label class="grow" for="accent">accent <span id="accentVal" class="val">×1.0</span></label><input id="accent" type="range" min="0" max="2" step="0.1" value="1"></div>
+        <p class="tip" id="audioHint">Press RUN or CLOCK (or tap space) to enable audio.</p>
+        <button id="audioBtn" class="small-btn">Enable audio</button>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <p>
+      Web port of <strong>DrumMap</strong> — a 2-channel Grids pattern generator for Hemisphere by
+      Ben Rosenbach, <a href="https://github.com/djphazer/O_C-Phazerville" target="_blank" rel="noopener">Phazerville firmware</a>,
+      based on Mutable Instruments Grids by Émilie Gillet (pattern data GPL-3.0). ReadDrumMap(),
+      chaos, thresholds, CV assignment and auto-reset are ported 1:1.
+    </p>
+  </footer>
+
+  <script src="js/data.js"></script>
+  <script src="js/engine.js"></script>
+  <script src="js/display.js"></script>
+  <script src="js/synth.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
