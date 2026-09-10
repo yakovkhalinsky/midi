@@ -22,7 +22,7 @@ or simply open `index.html` directly in a browser (plain `<script>` tags, works 
 **Live:** <https://yakov.khalinsky.com/midi/apps/tb3po/> (GitHub Pages)
 
 This page also runs in **rack slot mode** at `index.html?slot=1`: compact layout, no
-transport — the [rack](https://yakov.khalinsky.com/midi/rack/) drives the clock over
+transport — the [rack](https://yakov.khalinsky.com/midi/apps/rack/) drives the clock over
 postMessage. Settings are shared with this page (same-origin storage).
 
 ## What is faithful to the hardware

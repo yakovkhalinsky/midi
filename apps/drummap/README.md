@@ -16,7 +16,7 @@ No build step. Open `index.html` directly, or `python3 -m http.server` in this f
 **Live:** <https://yakov.khalinsky.com/midi/apps/drummap/> (GitHub Pages)
 
 A compact **rack slot mode** is available at `index.html?slot=1`: header/transport hidden,
-clock supplied by the [rack](https://yakov.khalinsky.com/midi/rack/) over postMessage.
+clock supplied by the [rack](https://yakov.khalinsky.com/midi/apps/rack/) over postMessage.
 Triggers can also fire over Web MIDI as GM drum notes (36 kick / 38 snare / 42 hat),
 with per-channel velocity and accent velocity.
 
