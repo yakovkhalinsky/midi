@@ -163,9 +163,33 @@ function finish() {
   const fail = results.length - pass;
   document.getElementById('out').textContent =
     'RESULTS pass=' + pass + ' fail=' + fail + '\n' + results.join('\n') + '\nOLED:\n' + oledArt();
+  midiDiag();
 }
 
 synthTest();
+
+// ---------- Web MIDI diagnostics (async, appends to #out) ----------
+async function midiDiag() {
+  const out = document.getElementById('out');
+  if (!navigator.requestMIDIAccess) {
+    out.textContent += '\nMIDI diag: no requestMIDIAccess (not a Chromium-based browser, or insecure context)';
+    return;
+  }
+  try {
+    const acc = await navigator.requestMIDIAccess({ sysex: false });
+    const outs = [...acc.outputs.values()];
+    const ins = [...acc.inputs.values()];
+    out.textContent += '\nMIDI diag: access granted — ' + outs.length + ' outputs, ' + ins.length + ' inputs';
+    for (const o of outs) out.textContent += '\n  out: ' + (o.name || o.id) + ' [' + o.id + '] state=' + o.state;
+    for (const i of ins) out.textContent += '\n  in: ' + (i.name || i.id) + ' [' + i.id + '] state=' + i.state;
+    if (!outs.length && !ins.length) {
+      out.textContent += '\n  (browser sees no MIDI devices — check interface is connected to this machine; ' +
+        'on Linux Chrome lists ALSA rawmidi ports; try restarting the browser)';
+    }
+  } catch (err) {
+    out.textContent += '\nMIDI diag: requestMIDIAccess rejected — ' + (err && err.name) + ': ' + (err && err.message);
+  }
+}
 </script>
 </body>
 </html>

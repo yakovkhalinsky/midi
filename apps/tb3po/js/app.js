@@ -254,7 +254,9 @@
 
   function midiStatusText() {
     if (!midiOut.access) return 'not granted yet';
-    if (!midiOut.output) return 'no output selected';
+    const outs = midiOut.outputs().length;
+    const ins = midiOut.access.inputs ? midiOut.access.inputs.size : 0;
+    if (!midiOut.output) return 'granted · ' + outs + ' out · ' + ins + ' in';
     const o = midiOut.outputs().find((x) => x.id === midiOut.output.id);
     return (o ? (o.name || o.id) : '?') + ' · ch ' + (midiOut.channel + 1);
   }
@@ -274,6 +276,12 @@
     }
   }
 
+  const EMPTY_DEVICE_TIP = 'Access granted, but the browser sees no MIDI devices. ' +
+    'Check the interface is powered and connected to the machine running this browser, ' +
+    'then press ↻ (Chrome also picks up hotplug automatically — restarting the browser ' +
+    'after connecting an interface can help). If you denied the MIDI prompt earlier, reset ' +
+    'it: padlock in the address bar → Site settings → MIDI.';
+
   function refreshMidiDevices() {
     const sel = $('midiDevice');
     const prev = midi.deviceId;
@@ -282,8 +290,11 @@
     if (!outs.length) {
       const opt = document.createElement('option');
       opt.value = '';
-      opt.textContent = midiOut.access ? 'no MIDI outputs found' : '—';
+      opt.textContent = midiOut.access ? 'no MIDI devices seen' : '—';
       sel.appendChild(opt);
+      $('midiHint').textContent = EMPTY_DEVICE_TIP;
+    } else if ($('midiHint').textContent === EMPTY_DEVICE_TIP) {
+      $('midiHint').textContent = 'Notes map: C4 = MIDI 60 · gate = 50% of the clock cycle · accent switches velocity.';
     }
     for (const o of outs) {
       const opt = document.createElement('option');
@@ -332,7 +343,17 @@
         saveSoon();
       }
     } catch (err) {
-      $('midiHint').textContent = 'Web MIDI needs a Chromium-based browser (Chrome / Edge / Opera) in a secure context — https://, or http://localhost.';
+      const name = err && err.name;
+      if (name === 'NotAllowedError') {
+        $('midiHint').textContent = 'MIDI permission was denied for this site. Click the padlock ' +
+          'in the address bar → Site settings → MIDI → reset permission, then press "Enable MIDI output" again.';
+      } else if (name === 'SecurityError') {
+        $('midiHint').textContent = 'Web MIDI was blocked: it needs a secure context (https:// or http://localhost).';
+      } else if (!(navigator.requestMIDIAccess)) {
+        $('midiHint').textContent = 'This browser has no Web MIDI API. Use Chrome / Edge / Opera (Firefox: dom.webmidi.enabled).';
+      } else {
+        $('midiHint').textContent = 'Web MIDI failed: ' + (err && err.message ? err.message : String(err));
+      }
     }
     updateMidiStatus();
   }
