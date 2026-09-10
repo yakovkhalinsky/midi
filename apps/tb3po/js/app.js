@@ -21,6 +21,10 @@
   let schedulerTimer = null;
   let uiCursor = CUR.NONE;
 
+  /* slot mode (?slot=1): the rack supplies clock/reset via postMessage,
+     the page hides its own transport and renders as a compact card */
+  const SLOT_MODE = new URLSearchParams(location.search).has('slot');
+
   const midiOut = new MidiOut(() => (audioCtx ? audioCtx.currentTime : undefined));
   const midiSeq = new MidiNoteSeq(midiOut);
   let outputDest = 'audio'; // 'audio' | 'midi'
@@ -80,10 +84,14 @@
 
   function period() { return 60 / (bpm * stepsPerBeat); }
 
-  /* One clock edge at time t (audio-clock domain when audio exists) */
-  function doClock(t) {
+  /* One clock edge at time t (audio-clock domain when audio exists).
+     explicitCycle: when driven by the rack, the interval between this and the
+     previous edge for THIS slot (period * clock-division); otherwise derived
+     from the last two local clocks. */
+  function doClock(t, explicitCycle) {
     engine.refreshDensity();
-    const cycle = lastClockT > 0 ? Math.min(Math.max(t - lastClockT, 0.03), 4) : period();
+    const cycle = explicitCycle !== undefined ? explicitCycle
+      : (lastClockT > 0 ? Math.min(Math.max(t - lastClockT, 0.03), 4) : period());
     const evs = engine.onClock(t, cycle);
     const toAudio = outputDest === 'audio' && voice;
     const toMidi = outputDest === 'midi';
@@ -619,6 +627,14 @@
     window.addEventListener('keydown', (e) => {
       const tag = (e.target.tagName || '').toLowerCase();
       if (tag === 'input' || tag === 'select' || tag === 'textarea') return;
+      if (SLOT_MODE) {
+        // in slot mode the rack owns the transport — forward instead of double-clocking
+        if (e.code === 'Space' || e.code === 'KeyR') {
+          e.preventDefault();
+          parent.postMessage({ type: 'rack-key', code: e.code }, '*');
+        }
+        return;
+      }
       if (e.code === 'Space') { e.preventDefault(); tapClock(); }
       else if (e.key === 'r' || e.key === 'R') { doReset(); }
     });
@@ -737,6 +753,41 @@
     $('releaseVal').textContent = synth.releaseMs.toFixed(0) + ' ms';
   }
 
+  /* ---- rack slot mode (?slot=1): transport driven by the parent rack ---- */
+  function initSlotMode() {
+    document.body.classList.add('slot-mode');
+    const reply = (msg) => { try { parent.postMessage(msg, '*'); } catch (e) { /* not framed */ } };
+    reply({ type: 'rack-ready', app: 'tb3po' });
+    window.addEventListener('message', (ev) => {
+      const m = ev.data || {};
+      if (m.type === 'rack-clock') {
+        ensureAudio();
+        if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+        let t = m.t;
+        if (audioCtx) {
+          const localBase = performance.now() - audioCtx.currentTime * 1000;
+          t = (m.base + m.t * 1000 - localBase) / 1000;
+        }
+        doClock(t, m.cycle);
+      } else if (m.type === 'rack-reset') {
+        doReset();
+      } else if (m.type === 'rack-run') {
+        ensureAudio();
+        if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+        if (!m.on) {
+          if (voice) voice.allOff();
+          if (outputDest === 'midi') midiSeq.silence();
+        }
+      } else if (m.type === 'rack-panic') {
+        if (voice) voice.allOff();
+        if (outputDest === 'midi') midiSeq.silence();
+        flashMidiLed();
+      } else if (m.type === 'rack-midi-enable') {
+        ensureMidiAccess();
+      }
+    });
+  }
+
   function setFavicon() {
     // header logo (CSS scales it up)
     const logo = $('logoIcon');
@@ -793,6 +844,7 @@
     updateLockUI();
     renderSeed();
     setFavicon();
+    if (SLOT_MODE) initSlotMode();
     requestAnimationFrame(frame);
   }
 

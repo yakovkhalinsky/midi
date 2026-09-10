@@ -22,6 +22,14 @@
   let uiCursor = DCUR.NONE;
   let lastFrameT = performance.now() / 1000;
 
+  /* slot mode (?slot=1): the rack supplies clock/reset via postMessage */
+  const SLOT_MODE = new URLSearchParams(location.search).has('slot');
+
+  /* MIDI out: trigger events re-encoded as GM drum notes (36/38/42) */
+  const midiOut = new MidiOut(() => (audioCtx ? audioCtx.currentTime : undefined));
+  const midi = { deviceId: null, channel: 9, velocity: 100, accentVel: 127 }; // ch 9 = MIDI channel 10 (GM drums)
+  const GM_DRUM_NOTE = [36, 38, 42];
+
   // synth params — source of truth until the voice exists
   const synth = {
     volume: 0.5,
@@ -68,6 +76,14 @@
   function doClock(t) {
     const events = engine.onClock(t);
     if (voice) for (const e of events) voice.hit(e);
+    if (midiOut.output) {
+      for (const e of events) {
+        const note = GM_DRUM_NOTE[e.part] || 36;
+        const vel = con(e.accent ? midi.accentVel : midi.velocity, 1, 127);
+        midiOut.send([0x90 | (midiOut.channel & 0xf), note, vel], t);
+        midiOut.send([0x80 | (midiOut.channel & 0xf), note, 0], t + 0.08);
+      }
+    }
     lastClockT = t;
   }
 
@@ -289,9 +305,138 @@
     window.addEventListener('keydown', (e) => {
       const tag = (e.target.tagName || '').toLowerCase();
       if (tag === 'input' || tag === 'select' || tag === 'textarea') return;
+      if (SLOT_MODE) {
+        // in slot mode the rack owns the transport — forward instead of double-clocking
+        if (e.code === 'Space' || e.code === 'KeyR') {
+          e.preventDefault();
+          parent.postMessage({ type: 'rack-key', code: e.code }, '*');
+        }
+        return;
+      }
       if (e.code === 'Space') { e.preventDefault(); tapClock(); }
       else if (e.key === 'r' || e.key === 'R') { doReset(); }
     });
+  }
+
+  // ------------------------------------------------------------------
+  // MIDI out (GM drums)
+  // ------------------------------------------------------------------
+  function flashMidiLed() {
+    /* no dedicated LED in the monitor row — the ch LEDs already blink on hits */
+  }
+
+  function midiStatusText() {
+    if (!midiOut.access) return 'not granted yet';
+    if (!midiOut.output) return 'granted · no output selected';
+    const outs = midiOut.outputs();
+    const o = outs.find((x) => x.id === midiOut.output.id);
+    return (o ? (o.name || o.id) : '?') + ' · ch ' + (midiOut.channel + 1);
+  }
+
+  function updateMidiStatus() {
+    $('midiStatus').textContent = 'Web MIDI: ' + midiStatusText();
+  }
+
+  function refreshMidiDevices() {
+    const sel = $('midiDevice');
+    const prev = midi.deviceId;
+    sel.textContent = '';
+    const outs = midiOut.outputs().map((o) => ({ id: o.id, name: o.name || o.id, manufacturer: o.manufacturer || '' }));
+    if (!outs.length) {
+      const opt = document.createElement('option');
+      opt.value = '';
+      opt.textContent = midiOut.access ? 'no MIDI devices seen' : '—';
+      sel.appendChild(opt);
+    }
+    for (const o of outs) {
+      const opt = document.createElement('option');
+      opt.value = o.id;
+      opt.textContent = o.name + (o.manufacturer ? ' (' + o.manufacturer + ')' : '');
+      sel.appendChild(opt);
+    }
+    if (prev && outs.some((o) => o.id === prev)) {
+      sel.value = prev;
+      midiOut.select(prev);
+    } else if (outs.length === 1) {
+      sel.value = outs[0].id;
+      midiOut.select(outs[0].id);
+    }
+    updateMidiStatus();
+  }
+
+  function syncMidiParams() {
+    midiOut.channel = midi.channel;
+    $('midiChannel').value = String(midi.channel);
+    $('midiVel').value = midi.velocity;
+    $('midiVelVal').textContent = midi.velocity;
+    $('midiAccVel').value = midi.accentVel;
+    $('midiAccVelVal').textContent = midi.accentVel;
+  }
+
+  async function ensureMidiAccess() {
+    if (midiOut.access) { refreshMidiDevices(); return; }
+    $('midiStatus').textContent = 'Web MIDI: requesting access…';
+    try {
+      await midiOut.init();
+      midiOut.onState = () => refreshMidiDevices();
+      if (midi.deviceId) midiOut.select(midi.deviceId);
+      refreshMidiDevices();
+      const sel = $('midiDevice');
+      if (sel.value) {
+        midi.deviceId = sel.value;
+        midiOut.select(sel.value);
+        saveSoon();
+      }
+    } catch (err) {
+      const name = err && err.name;
+      if (name === 'NotAllowedError') {
+        $('midiStatus').textContent = 'Web MIDI: permission denied — reset it in site settings';
+      } else if (name === 'SecurityError') {
+        $('midiStatus').textContent = 'Web MIDI: needs a secure context (https / localhost)';
+      } else if (!(navigator.requestMIDIAccess)) {
+        $('midiStatus').textContent = 'Web MIDI: not supported in this browser';
+      } else {
+        $('midiStatus').textContent = 'Web MIDI: failed (' + (err && err.message ? err.message : err) + ')';
+      }
+    }
+    updateMidiStatus();
+  }
+
+  function initMidiUI() {
+    const chSel = $('midiChannel');
+    for (let c = 0; c < 16; c++) {
+      const opt = document.createElement('option');
+      opt.value = c;
+      opt.textContent = 'ch ' + (c + 1) + (c === 9 ? ' (GM)' : '');
+      chSel.appendChild(opt);
+    }
+    syncMidiParams();
+    updateMidiStatus();
+
+    $('midiConnect').addEventListener('click', ensureMidiAccess);
+    $('midiRefresh').addEventListener('click', () => { ensureMidiAccess().then(refreshMidiDevices); });
+    $('midiDevice').addEventListener('change', () => {
+      midi.deviceId = $('midiDevice').value || null;
+      midiOut.select(midi.deviceId);
+      updateMidiStatus();
+      saveSoon();
+    });
+    chSel.addEventListener('change', () => {
+      midi.channel = parseInt(chSel.value, 10);
+      midiOut.channel = midi.channel;
+      saveSoon();
+    });
+    $('midiVel').addEventListener('input', () => {
+      midi.velocity = parseInt($('midiVel').value, 10);
+      $('midiVelVal').textContent = midi.velocity;
+      saveSoon();
+    });
+    $('midiAccVel').addEventListener('input', () => {
+      midi.accentVel = parseInt($('midiAccVel').value, 10);
+      $('midiAccVelVal').textContent = midi.accentVel;
+      saveSoon();
+    });
+    $('midiPanic').addEventListener('click', () => { midiOut.allOff(); });
   }
 
   function initAudioUI() {
@@ -330,6 +475,7 @@
         x: engine.x, y: engine.y, chaos: engine.chaos, cvMode: engine.cvMode,
         cv: engine.cv.slice(), patternSet: engine.patternSet,
         bpm, stepsPerBeat, synth,
+        midi,
       }));
     } catch (e) { /* storage unavailable */ }
   }
@@ -348,6 +494,8 @@
       bpm = con(d.bpm || 120, 20, 300);
       stepsPerBeat = [1, 2, 4, 8].includes(d.stepsPerBeat) ? d.stepsPerBeat : 8;
       if (d.synth) Object.assign(synth, d.synth);
+      if (d.midi) Object.assign(midi, d.midi);
+      midiOut.channel = midi.channel;
     } catch (e) { /* ignore */ }
   }
 
@@ -421,16 +569,33 @@
     document.head.appendChild(link);
   }
 
-  function boot() {
-    load();
-    engine.refreshModulation();
-
-    initParamUI();
-    initTransportUI();
-    initAudioUI();
-    syncControlsFromEngine();
-    setFavicon();
-    requestAnimationFrame(frame);
+  /* ---- rack slot mode (?slot=1): transport driven by the parent rack ---- */
+  function initSlotMode() {
+    document.body.classList.add('slot-mode');
+    const reply = (msg) => { try { parent.postMessage(msg, '*'); } catch (e) { /* not framed */ } };
+    reply({ type: 'rack-ready', app: 'drummap' });
+    window.addEventListener('message', (ev) => {
+      const m = ev.data || {};
+      if (m.type === 'rack-clock') {
+        ensureAudio();
+        if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+        let t = m.t;
+        if (audioCtx) {
+          const localBase = performance.now() - audioCtx.currentTime * 1000;
+          t = (m.base + m.t * 1000 - localBase) / 1000;
+        }
+        doClock(t);
+      } else if (m.type === 'rack-reset') {
+        doReset();
+      } else if (m.type === 'rack-run') {
+        ensureAudio();
+        if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+      } else if (m.type === 'rack-panic') {
+        midiOut.allOff();
+      } else if (m.type === 'rack-midi-enable') {
+        ensureMidiAccess();
+      }
+    });
   }
 
   function boot() {
@@ -440,8 +605,10 @@
     initParamUI();
     initTransportUI();
     initAudioUI();
+    initMidiUI();
     syncControlsFromEngine();
     setFavicon();
+    if (SLOT_MODE) initSlotMode();
     requestAnimationFrame(frame);
   }
 

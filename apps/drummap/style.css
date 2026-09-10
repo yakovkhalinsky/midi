@@ -297,3 +297,20 @@ footer {
   font-size: 11.5px;
   line-height: 1.5;
 }
+/* ---------------- rack slot mode (?slot=1) ---------------- */
+body.slot-mode header, body.slot-mode footer,
+body.slot-mode .transport, body.slot-mode .monitor { display: none; }
+body.slot-mode main { display: block; padding: 8px 12px; }
+body.slot-mode .panel { width: 100%; padding: 10px 12px; }
+body.slot-mode .oled-caption, body.slot-mode .strip-caption { display: none; }
+body.slot-mode .strip-wrap { margin-top: 10px; }
+body.slot-mode .panel.right {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(235px, 1fr));
+  gap: 10px;
+  align-content: start;
+}
+body.slot-mode .group { padding: 10px 12px; }
+body.slot-mode .group h2 { margin: 0 0 8px; font-size: 13px; }
+body.slot-mode .group p.tip { margin-top: 6px; }

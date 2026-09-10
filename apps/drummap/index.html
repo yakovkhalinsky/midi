@@ -140,6 +140,28 @@
         <p class="tip" id="audioHint">Press RUN or CLOCK (or tap space) to enable audio.</p>
         <button id="audioBtn" class="small-btn">Enable audio</button>
       </div>
+
+      <div class="group" id="midiGroup">
+        <h2>MIDI out <span class="sub">(GM drums: 36 kick · 38 snare · 42 hat)</span></h2>
+        <div class="row">
+          <label for="midiDevice">device</label>
+          <select id="midiDevice"></select>
+          <button id="midiRefresh" class="small-btn" title="re-scan MIDI outputs">↻</button>
+        </div>
+        <div class="row">
+          <label for="midiChannel">channel</label>
+          <select id="midiChannel"></select>
+          <label class="grow" for="midiVel">vel <span id="midiVelVal" class="val">100</span></label>
+          <input id="midiVel" type="range" min="1" max="127" step="1" value="100">
+        </div>
+        <div class="row">
+          <label class="grow" for="midiAccVel">accent vel <span id="midiAccVelVal" class="val">127</span></label>
+          <input id="midiAccVel" type="range" min="1" max="127" step="1" value="127">
+          <button id="midiPanic" class="small-btn" title="all notes off">panic</button>
+        </div>
+        <p class="tip" id="midiStatus">Web MIDI: idle</p>
+        <button id="midiConnect" class="small-btn">Enable MIDI output</button>
+      </div>
     </section>
   </main>
 
@@ -156,6 +178,7 @@
   <script src="js/engine.js"></script>
   <script src="js/display.js"></script>
   <script src="js/synth.js"></script>
+  <script src="js/midi.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

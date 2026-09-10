@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Rack — web sequencer ports</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <div class="title">
+      <h1>Rack <span class="sub">— up to 3 apps · shared clock</span></h1>
+      <p>
+        Stacks app cards in a column on one clock: one BPM, one RUN/STOP, one RESET.
+        Each card is a live instance of an app in compact mode — its parameters, voice
+        and MIDI routing stay inside the card; the transport here drives every slot.
+        Clock edges can be divided per slot (÷N) so apps running at different clock
+        rates (e.g. TB-3PO 16ths vs DrumMap 32nds) stay in sync.
+      </p>
+    </div>
+  </header>
+
+  <div class="transport-bar">
+    <button id="runBtn" class="big-btn">RUN</button>
+    <div class="bpm-wrap">
+      <label for="bpm">BPM</label>
+      <input id="bpm" type="number" min="20" max="300" step="1" value="124">
+      <select id="div" title="shared clock division — clock edges per beat">
+        <option value="1">1/4</option>
+        <option value="2">1/8</option>
+        <option value="4" selected>1/16</option>
+        <option value="8">1/32</option>
+      </select>
+    </div>
+    <button id="clockBtn" class="big-btn tap">CLOCK<span class="hint">space</span></button>
+    <button id="resetBtn" class="big-btn tap">RESET<span class="hint">R</span></button>
+    <div class="midi-wrap">
+      <span class="mon-label">MIDI</span>
+      <select id="midiDevice"></select>
+      <button id="midiConnect" class="small-btn" title="grant Web MIDI access and push the device to all slots">enable</button>
+      <button id="midiRefresh" class="small-btn" title="re-scan MIDI outputs">↻</button>
+      <button id="midiPanic" class="small-btn" title="silence every slot (all notes off)">panic</button>
+      <span id="midiStatus" class="tip inline">Web MIDI: idle</span>
+    </div>
+  </div>
+
+  <main>
+    <section class="slot" data-slot="0">
+      <div class="slot-bar">
+        <select class="appPick" title="app in this slot">
+          <option value="">— empty slot —</option>
+          <option value="tb3po">TB-3PO</option>
+          <option value="drummap">DrumMap</option>
+        </select>
+        <label class="divwrap">clock ÷<select class="divPick"></select></label>
+        <label class="switch"><input type="checkbox" class="mutePick"><span>mute</span></label>
+        <span class="slot-state"></span>
+      </div>
+      <div class="iframe-wrap">
+        <iframe class="slotFrame" height="500" scrolling="yes"></iframe>
+      </div>
+    </section>
+    <section class="slot" data-slot="1">
+      <div class="slot-bar">
+        <select class="appPick" title="app in this slot">
+          <option value="">— empty slot —</option>
+          <option value="tb3po">TB-3PO</option>
+          <option value="drummap">DrumMap</option>
+        </select>
+        <label class="divwrap">clock ÷<select class="divPick"></select></label>
+        <label class="switch"><input type="checkbox" class="mutePick"><span>mute</span></label>
+        <span class="slot-state"></span>
+      </div>
+      <div class="iframe-wrap">
+        <iframe class="slotFrame" height="500" scrolling="yes"></iframe>
+      </div>
+    </section>
+    <section class="slot" data-slot="2">
+      <div class="slot-bar">
+        <select class="appPick" title="app in this slot">
+          <option value="">— empty slot —</option>
+          <option value="tb3po">TB-3PO</option>
+          <option value="drummap">DrumMap</option>
+        </select>
+        <label class="divwrap">clock ÷<select class="divPick"></select></label>
+        <label class="switch"><input type="checkbox" class="mutePick"><span>mute</span></label>
+        <span class="slot-state"></span>
+      </div>
+      <div class="iframe-wrap">
+        <iframe class="slotFrame" height="500" scrolling="yes"></iframe>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <p>
+      Shared-clock rack for the <a href="../" target="_blank" rel="noopener">web sequencer ports</a>.
+      Slots run the real apps (same settings as their standalone pages — localStorage is shared per origin).
+      Click inside a card once if its audio doesn't start (browser autoplay policies); the enable buttons
+      inside each card always work.
+    </p>
+  </footer>
+
+  <script src="../tb3po/js/midi.js"></script>
+  <script src="js/rack.js"></script>
+</body>
+</html>
