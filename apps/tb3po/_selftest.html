@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>tb3po selftest</title></head>
+<body>
+<pre id="out">running...</pre>
+<script src="js/data.js"></script>
+<script src="js/engine.js"></script>
+<script src="js/display.js"></script>
+<script src="js/synth.js"></script>
+<script src="js/midi.js"></script>
+<script src="js/midiseq.js"></script>
+<script>
+window.onerror = function (msg, src, line) {
+  document.getElementById('out').textContent += '\nPAGE ERROR: ' + msg + ' @' + src + ':' + line;
+};
+const results = [];
+function check(name, cond, extra) {
+  results.push((cond ? 'PASS ' : 'FAIL ') + name + (extra !== undefined ? ' [' + extra + ']' : ''));
+}
+
+// ---------- engine basics ----------
+const e = new TB3PO();
+e.lockSeed = 1; e.seed = 0x1234; e.densityEncoder = 12; e.refreshDensity();
+e.regeneratePhase = 1; e.updateRegeneration();
+const e2 = new TB3PO();
+e2.lockSeed = 1; e2.seed = 0x1234; e2.densityEncoder = 12; e2.refreshDensity();
+e2.regeneratePhase = 1; e2.updateRegeneration();
+check('deterministic pattern', e.gates === e2.gates && e.slides === e2.slides && JSON.stringify(e.notes) === JSON.stringify(e2.notes));
+
+// ---------- playback events ----------
+const evs = [];
+for (let i = 0; i < 16; i++) evs.push(...e.onClock(0.1 * (i + 1), 0.1));
+check('clocks produced events', evs.some(x => x.type === 'gateOn') && evs.some(x => x.type === 'pitch'));
+check('steps advance', e.step === 15, 'step ' + e.step + ' (first clock consumes resetFlag)');
+
+// ---------- OLED rendering ----------
+const ol = new OLED();
+drawTB3PO(ol, e, CUR.NONE);
+let lit = 0; for (let i = 0; i < ol.buf.length; i++) lit += ol.buf[i];
+check('OLED has content', lit > 100, lit);
+
+// seed digits "1234" drawn at (25,15)
+const digits = '1234';
+let seedOK = true;
+for (let d = 0; d < 4; d++) {
+  const g = fontGlyph(digits.charCodeAt(d));
+  const x = 25 + d * 6;
+  for (let c = 0; c < 6; c++) for (let r = 0; r < 8; r++) {
+    const want = (g[c] >>> r) & 1;
+    if (!!ol.buf[(15 + r) * 64 + x + c] !== !!want) seedOK = false;
+  }
+}
+check('seed hex glyphs pixel-exact', seedOK);
+
+// keyboard region lit
+let kb = 0;
+for (let y = 50; y < 64; y++) for (let x = 0; x < 41; x++) kb += ol.buf[y * 64 + x];
+check('keyboard drawn', kb > 30, kb);
+
+// cursor inverts
+const olBare = new OLED();
+drawTB3PO(olBare, e, CUR.NONE);
+const olInv = new OLED();
+drawTB3PO(olInv, e, CUR.DENSITY);
+let diff = 0;
+for (let i = 0; i < ol.buf.length; i++) if (olBare.buf[i] !== olInv.buf[i]) diff++;
+check('cursor overlay', diff > 0, diff);
+
+// ---------- shared MidiOut helper (stub access) ----------
+const midiSent = [];
+const fakeMidiOut = { id: 'x1', name: 'Stub Synth', send: (b, ts) => midiSent.push({ b, ts }) };
+const mo = new MidiOut(() => 5.0); // scheduler time stub: 5 s
+mo.access = { outputs: new Map([['x1', fakeMidiOut]]) };
+mo.select('x1');
+mo.channel = 3; // MIDI ch 4
+
+mo.noteOn(60, 100, undefined);
+check('midi note-on bytes', midiSent[0].b[0] === 0x93 && midiSent[0].b[1] === 60 && midiSent[0].b[2] === 100, JSON.stringify(midiSent[0].b));
+check('midi note-on immediate ts', midiSent[0].ts === undefined);
+mo.noteOn(64, 100, 7);
+check('midi scheduled ts translated', typeof midiSent[1].ts === 'number' && midiSent[1].ts > performance.now() + 1500, midiSent[1].ts);
+mo.noteOff(64, undefined);
+check('midi note-off bytes', midiSent[2].b[0] === 0x83 && midiSent[2].b[1] === 64, JSON.stringify(midiSent[2].b));
+mo.allOff();
+check('midi all-notes-off', midiSent[3].b[0] === 0xb3 && midiSent[3].b[1] === 123, JSON.stringify(midiSent[3].b));
+
+// ---------- TB-3PO note sequencer over the shared helper ----------
+(function () {
+  const seq = new MidiNoteSeq(mo);
+  const sent = midiSent;
+  seq.velocity = 100; seq.accentVel = 127;
+  check('midi note mapping C4=60', seq.noteFor(0) === 60, seq.noteFor(0));
+  check('midi note mapping +octave', (seq.octave = 1, seq.noteFor(0) === 72), seq.noteFor(0));
+  check('midi note clamp', (seq.octave = 0, seq.noteFor(70) === 127), seq.noteFor(70));
+
+  const i0 = sent.length;
+  seq.noteOn(60, false, undefined);
+  check('seq note-on velocity', sent[i0].b[0] === 0x93 && sent[i0].b[1] === 60 && sent[i0].b[2] === 100, JSON.stringify(sent[i0].b));
+  seq.noteOn(64, true, undefined); // new pitch while gate held -> chain
+  check('seq chained note-off then accent note-on', sent[i0+1].b[0] === 0x83 && sent[i0+1].b[1] === 60
+    && sent[i0+2].b[0] === 0x93 && sent[i0+2].b[1] === 64 && sent[i0+2].b[2] === 127,
+    JSON.stringify([sent[i0+1].b, sent[i0+2].b]));
+  seq.noteOff(undefined);
+  check('seq note-off bytes', sent[i0+3].b[0] === 0x83 && sent[i0+3].b[1] === 64, JSON.stringify(sent[i0+3].b));
+  seq.noteOff(undefined);
+  check('seq stray note-off ignored', sent.length === i0+4, sent.length - i0);
+
+  seq.noteOn(40, false, undefined);
+  seq.slidesToPortamento = true;
+  seq.noteOn(48, false, undefined); // chained note with portamento
+  check('seq portamento CC65 on chained', sent[i0+6].b[0] === 0xb3 && sent[i0+6].b[1] === 65 && sent[i0+6].b[2] === 127,
+    JSON.stringify(sent[i0+6].b));
+  seq.noteOff(undefined);
+  check('seq portamento CC65 off at gate cut', sent[i0+9].b[1] === 65 && sent[i0+9].b[2] === 0, JSON.stringify(sent[i0+9].b));
+
+  seq.noteOn(50, false, undefined);
+  seq.silence();
+  const ano = sent.find((m) => m.b[0] === 0x83 && m.b[1] === 123);
+  check('seq silence sends all-notes-off', !!ano, JSON.stringify(sent.slice(-3).map((m) => m.b)));
+
+  seq.programChange(42, undefined);
+  check('seq program change', sent[sent.length-1].b[0] === 0xc3 && sent[sent.length-1].b[1] === 42,
+    JSON.stringify(sent[sent.length-1].b));
+})();
+
+// ---------- synth through OfflineAudioContext ----------
+async function synthTest() {
+  try {
+    const sr = 44100;
+    const oc = new OfflineAudioContext(1, Math.floor(sr * 0.25), sr);
+    const v = new AcidVoice(oc);
+    v.params.volume = 0.3;
+    v.pitch({ t: 0.01, semis: 4, glide: false });
+    v.gateOn({ t: 0.01, accent: false, retrig: true });
+    v.gateOff(0.11);
+    const buf = await oc.startRendering();
+    const d = buf.getChannelData(0);
+    let peak = 0, rms = 0;
+    for (let i = 0; i < d.length; i++) { const a = Math.abs(d[i]); if (a > peak) peak = a; rms += d[i] * d[i]; }
+    rms = Math.sqrt(rms / d.length);
+    check('voice renders audio', peak > 0.01 && rms > 1e-4, 'peak ' + peak.toFixed(3) + ' rms ' + rms.toFixed(4));
+    // silence after gate-off tail
+    const lateStart = Math.floor(sr * 0.18);
+    let late = 0;
+    for (let i = lateStart; i < d.length; i++) late = Math.max(late, Math.abs(d[i]));
+    check('gate-off silences voice', late < 0.02, 'late ' + late.toFixed(4));
+  } catch (err) {
+    results.push('FAIL synth test threw: ' + err);
+  }
+  finish();
+}
+
+function oledArt() {
+  const olA = new OLED();
+  drawTB3PO(olA, e, CUR.NONE);
+  let art = '';
+  for (let y = 0; y < 64; y++) { art += '\n'; for (let x = 0; x < 64; x++) art += olA.buf[y*64+x] ? '#' : '.'; }
+  return art;
+}
+
+function finish() {
+  const pass = results.filter(r => r.startsWith('PASS')).length;
+  const fail = results.length - pass;
+  document.getElementById('out').textContent =
+    'RESULTS pass=' + pass + ' fail=' + fail + '\n' + results.join('\n') + '\nOLED:\n' + oledArt();
+}
+
+synthTest();
+</script>
+</body>
+</html>

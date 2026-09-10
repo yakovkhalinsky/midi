@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TB-3PO — Web Edition (Phazerville Hemisphere applet)</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <canvas id="logoIcon" width="8" height="8"></canvas>
+    <div class="title">
+      <h1>TB-3PO <span class="sub">— web edition</span></h1>
+      <p>A browser port of the <a href="https://github.com/djphazer/O_C-Phazerville/blob/main/software/src/applets/TB3PO.h" target="_blank" rel="noopener">TB-3PO Hemisphere applet</a> (Ornament &amp; Crime / Phazerville firmware, by Logarhythm &amp; djphazer). Same seed&nbsp;=&nbsp;same pattern: the generator and PRNG are ported bit-exactly.</p>
+    </div>
+  </header>
+
+  <main>
+    <!-- ===================== OLED + transport ===================== -->
+    <section class="panel left">
+      <div class="oled-bezel">
+        <canvas id="oled" width="64" height="64"></canvas>
+      </div>
+      <div class="oled-caption">128×64 OLED · Hemisphere quadrant · 1&nbsp;V/oct pitch + gate, slides &amp; accents</div>
+
+      <div class="transport">
+        <button id="runBtn" class="big-btn">RUN</button>
+        <div class="bpm-wrap">
+          <label for="bpm">BPM</label>
+          <input id="bpm" type="number" min="20" max="300" step="1" value="124">
+          <select id="div" title="clock steps per beat — TB-303 style is 1/16">
+            <option value="1">1/4</option>
+            <option value="2">1/8</option>
+            <option value="4" selected>1/16</option>
+            <option value="8">1/32</option>
+          </select>
+        </div>
+        <button id="clockBtn" class="big-btn tap">CLOCK<span class="hint">space</span></button>
+        <button id="resetBtn" class="big-btn tap">RESET<span class="hint">R</span></button>
+      </div>
+
+      <div class="monitor">
+        <div class="mon-item"><span class="mon-label">PITCH CV</span><span id="pitchV" class="mon-val">0.00 V</span></div>
+        <div class="mon-item"><span class="mon-label">GATE</span><span id="gateV" class="mon-val">0 V</span></div>
+        <div class="mon-item"><span class="mon-label">NOTE</span><span id="noteName" class="mon-val">C</span></div>
+        <div class="led-wrap"><span class="led" id="gateLed"></span><span class="led-label">GATE</span></div>
+        <div class="led-wrap"><span class="led accent" id="accLed"></span><span class="led-label">ACCENT</span></div>
+        <div class="led-wrap"><span class="led blue" id="slideLed"></span><span class="led-label">SLIDE</span></div>
+        <div class="led-wrap"><span class="led purple" id="midiLed"></span><span class="led-label">MIDI</span></div>
+      </div>
+
+      <div class="strip-wrap">
+        <canvas id="strip" width="488" height="64"></canvas>
+        <div class="strip-caption">generated pattern — gates, accents, slides, octaves, pitch</div>
+      </div>
+    </section>
+
+    <!-- ===================== parameters ===================== -->
+    <section class="panel right">
+      <div class="group">
+        <h2>Seed</h2>
+        <div class="row">
+          <button id="lockBtn">UNLOCKED</button>
+          <button id="randBtn" title="New random seed (die icon)">RANDOM</button>
+        </div>
+        <div class="seed-digits">
+          <div class="hexdigit" tabindex="0">
+            <button class="up" aria-label="increment">+</button><span class="val">0</span><button class="down" aria-label="decrement">−</button>
+          </div>
+          <div class="hexdigit" tabindex="0">
+            <button class="up" aria-label="increment">+</button><span class="val">0</span><button class="down" aria-label="decrement">−</button>
+          </div>
+          <div class="hexdigit" tabindex="0">
+            <button class="up" aria-label="increment">+</button><span class="val">0</span><button class="down" aria-label="decrement">−</button>
+          </div>
+          <div class="hexdigit" tabindex="0">
+            <button class="up" aria-label="increment">+</button><span class="val">0</span><button class="down" aria-label="decrement">−</button>
+          </div>
+        </div>
+        <p class="tip">Unlocked (die): pattern re-randomizes on every RESET. Locked (lock icon): the 4 hex digits become editable — same seed, same pattern.</p>
+      </div>
+
+      <div class="group">
+        <h2>Density</h2>
+        <div class="row">
+          <label class="grow" for="density">encoder <span id="densityVal" class="val">+5</span></label>
+          <input id="density" type="range" min="0" max="14" step="1" value="12">
+        </div>
+        <div class="row">
+          <label class="grow" for="densityCv">CV&nbsp;2 <span id="densityCvVal" class="val">0.0 V</span></label>
+          <input id="densityCv" type="range" min="-15" max="15" step="1" value="0">
+        </div>
+        <div class="row">
+          <label class="switch"><input id="densityAuto" type="checkbox"><span>step-recorded density (AuxButton)</span></label>
+        </div>
+        <p class="tip">−7: dense gates, root note only · 0: sparse, full scale · +7: dense, full scale. The slider sets the centerpoint; CV offsets it like the O&amp;C's CV input.</p>
+      </div>
+
+      <div class="group">
+        <h2>Quantizer&nbsp;<span class="sub">Q1</span></h2>
+        <div class="row">
+          <label for="scale">scale</label>
+          <select id="scale"></select>
+        </div>
+        <div class="row">
+          <label for="root">root</label>
+          <select id="root"></select>
+          <label for="qoctave">oct</label>
+          <select id="qoctave"></select>
+        </div>
+      </div>
+
+      <div class="group">
+        <h2>Transpose</h2>
+        <div class="row">
+          <label class="grow" for="transpose">CV&nbsp;1 <span id="transVal" class="val">0</span></label>
+          <input id="transpose" type="range" min="-24" max="24" step="1" value="0">
+        </div>
+        <div class="row">
+          <button id="transMode" class="toggle">Deg</button>
+          <span class="tip inline">Root = semitones after quantize · Deg = scale degrees, stays in scale</span>
+        </div>
+      </div>
+
+      <div class="group">
+        <h2>Pattern</h2>
+        <div class="row">
+          <label class="grow" for="length">length <span id="lenVal" class="val">16</span></label>
+          <input id="length" type="range" min="1" max="32" step="1" value="16">
+        </div>
+        <div class="row switches">
+          <label class="switch"><input id="holdPitch" type="checkbox" checked><span>Hold pitch</span></label>
+          <label class="switch"><input id="noSlides" type="checkbox"><span>Disable slides (AuxButton)</span></label>
+          <label class="switch"><input id="freeze" type="checkbox"><span>Freeze steps (Reset jack held)</span></label>
+        </div>
+      </div>
+
+      <div class="group">
+        <h2>Output <span class="sub">(web addition — the hardware outputs CV to your synth)</span></h2>
+        <div class="row">
+          <label for="outputDest">destination</label>
+          <select id="outputDest">
+            <option value="audio" selected>Web Audio</option>
+            <option value="midi">MIDI out</option>
+          </select>
+        </div>
+
+        <div class="audio-rows">
+          <div class="row"><label class="grow" for="vol">volume <span id="volVal" class="val">22%</span></label><input id="vol" type="range" min="0" max="0.6" step="0.01" value="0.22"></div>
+          <div class="row"><label class="grow" for="cutoff">cutoff <span id="cutoffVal" class="val">550 Hz</span></label><input id="cutoff" type="range" min="120" max="4000" step="10" value="550"></div>
+          <div class="row"><label class="grow" for="resonance">resonance <span id="resonanceVal" class="val">10.0</span></label><input id="resonance" type="range" min="1" max="20" step="0.1" value="10"></div>
+          <div class="row"><label class="grow" for="env">filter env <span id="envVal" class="val">2600 Hz</span></label><input id="env" type="range" min="0" max="6000" step="50" value="2600"></div>
+          <div class="row"><label class="grow" for="accent">accent <span id="accentVal" class="val">×1.0</span></label><input id="accent" type="range" min="0" max="2" step="0.1" value="1"></div>
+          <div class="row"><label class="grow" for="glide">glide <span id="glideVal" class="val">5.2 ms</span></label><input id="glide" type="range" min="1" max="30" step="0.1" value="5.2"></div>
+          <div class="row"><label class="grow" for="release">release <span id="releaseVal" class="val">14 ms</span></label><input id="release" type="range" min="2" max="60" step="1" value="14"></div>
+          <p class="tip" id="audioHint">Press RUN or CLOCK (or tap space) to enable audio.</p>
+          <button id="audioBtn" class="small-btn">Enable audio</button>
+        </div>
+      </div>
+
+      <div class="group" id="midiGroup">
+        <h2>MIDI out</h2>
+        <div class="row">
+          <label for="midiDevice">device</label>
+          <select id="midiDevice"></select>
+          <button id="midiRefresh" class="small-btn" title="re-scan MIDI outputs">↻</button>
+        </div>
+        <div class="row">
+          <label for="midiChannel">channel</label>
+          <select id="midiChannel"></select>
+          <label for="midiOctave">oct</label>
+          <select id="midiOctave"></select>
+        </div>
+        <div class="row"><label class="grow" for="midiVel">velocity <span id="midiVelVal" class="val">100</span></label><input id="midiVel" type="range" min="1" max="127" step="1" value="100"></div>
+        <div class="row"><label class="grow" for="midiAccVel">accent velocity <span id="midiAccVelVal" class="val">127</span></label><input id="midiAccVel" type="range" min="1" max="127" step="1" value="127"></div>
+        <div class="row switches">
+          <label class="switch"><input id="midiPortamento" type="checkbox"><span>slides → CC65 portamento</span></label>
+        </div>
+        <div class="row">
+          <label for="midiProg">program</label>
+          <input id="midiProg" type="number" min="0" max="127" step="1" value="0" style="width:4.5em">
+          <button id="midiProgSend" class="small-btn" title="send program change on the selected channel">send PC</button>
+          <button id="midiPanic" class="small-btn" title="all notes off on the selected channel">panic</button>
+        </div>
+        <p class="tip" id="midiHint">Notes map: C4&nbsp;=&nbsp;MIDI&nbsp;60 · gate = 50% of the clock cycle · accent switches velocity.</p>
+        <p class="tip" id="midiStatus">Web MIDI: idle</p>
+        <button id="midiConnect" class="small-btn">Enable MIDI output</button>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <p>
+      Web port of <strong>TB-3PO</strong> — a random generator of TB-303 style acid patterns by
+      <a href="https://github.com/djphazer/O_C-Phazerville" target="_blank" rel="noopener">Phazerville</a>
+      (applet © 2020 Logarhythm, mods by djphazer, MIT license; quantizer &amp; scales by Émilie Gillet / Bryan Head).
+      Pattern generation, PRNG and quantizer are ported from the Teensy 4.x firmware; pitch CV maps to 1&nbsp;V/oct with C4&nbsp;=&nbsp;0&nbsp;V.
+    </p>
+  </footer>
+
+  <script src="js/data.js"></script>
+  <script src="js/engine.js"></script>
+  <script src="js/display.js"></script>
+  <script src="js/synth.js"></script>
+  <script src="js/midi.js"></script>
+  <script src="js/midiseq.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
