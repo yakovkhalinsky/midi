@@ -26,6 +26,10 @@ localStorage.setItem('rack-web-v2', JSON.stringify({
 <script src="js/dm-engine.js"></script>
 <script src="js/dm-display.js"></script>
 <script src="js/dm-synth.js"></script>
+<script src="js/mg-notes.js"></script>
+<script src="js/mg-scales.js"></script>
+<script src="js/mg-generators.js"></script>
+<script src="js/mg-synth.js"></script>
 <script src="js/rack.js"></script>
 <script>
 window.onerror = function (msg, src, line) {
@@ -143,6 +147,66 @@ check('drummap OLED rendered in cell', dm.cell.oledCtx.getImageData(32, 32, 1, 1
   check('slot swap keeps one cell per slot', cellCount0 === cellCount1, cellCount0 + '->' + cellCount1);
   check('cell name updates on app change', fresh.cell.querySelector('.cell-name').textContent === '3: DrumMap',
     fresh.cell.querySelector('.cell-name').textContent);
+}
+
+
+// ---------- melogen slot ----------
+{
+  const empty = rack.slots[2];
+  empty.silence && empty.silence();
+  empty.cell.remove();
+  empty.controls.remove();
+  const mg = RackSlots.createSlot(2, 'melogen');
+  mg.div = 1; mg.muted = false;
+  rack.slots[2] = mg;
+  RackSlots.selectSlot(2);
+  check('melogen slot created', mg.app === 'melogen', mg.app);
+  check('cell name updates on melogen', mg.cell.querySelector('.cell-name').textContent === '3: Melogen',
+    mg.cell.querySelector('.cell-name').textContent);
+
+  mg.params.seed = 'deadbeef';
+  mg.params.algo = 'random';
+  mg.params.length = 16;
+  mg.params.density = 0.8;
+  mg.applyEngine();
+  check('melogen regenerate produces notes', mg.notes.length >= 1, 'notes=' + mg.notes.length);
+  check('melogen byStep populated', mg.byStep.some((b) => b.length > 0),
+    'gated=' + mg.byStep.filter((b) => b.length).length);
+
+  midiSent.length = 0;
+  rack.outputDest = 'midi';
+  mg.midiParams.channel = 2;
+  mg.step = 0;
+  // advance through a full pattern looking for note-ons
+  for (let i = 0; i < mg.params.length; i++) {
+    mg.onClock(500 + i * 0.125, 0.125);
+  }
+  const mgOn = midiSent.filter((m) => (m.b[0] & 0xf0) === 0x90);
+  check('melogen clock emits midi note-ons', mgOn.length >= 1, 'ons=' + mgOn.length);
+  check('melogen notes on slot channel', mgOn.length === 0 || mgOn.every((m) => (m.b[0] & 0x0f) === 2),
+    mgOn[0] && mgOn[0].b[0]);
+  check('melogen note-offs scheduled', midiSent.some((m) => (m.b[0] & 0xf0) === 0x80));
+
+  // step advances
+  const stepBefore = mg.step;
+  mg.onClock(600, 0.125);
+  check('melogen step advances', mg.step === (stepBefore + 1) % mg.params.length,
+    stepBefore + '->' + mg.step);
+
+  // audio path
+  rack.outputDest = 'audio';
+  midiSent.length = 0;
+  if (!rack.audioCtx) rack.audioCtx = new AudioContext();
+  mg.ensureVoice();
+  check('melogen voice created', !!mg.voice);
+  mg.onClock(700, 0.125);
+  check('melogen audio dest sends no midi', midiSent.length === 0, midiSent.length);
+
+  mg.render();
+  let mgLit = 0;
+  const mgPx = mg.cell.oledCtx.getImageData(0, 0, 64, 64).data;
+  for (let i = 3; i < mgPx.length; i += 4) if (mgPx[i] > 0) mgLit++;
+  check('melogen OLED rendered in cell', mgLit > 50, mgLit);
 }
 
 function finish() {

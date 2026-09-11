@@ -5,6 +5,7 @@ Web Audio preview or Web MIDI out. **Same seed → same notes.**
 
 Not a direct Phazerville applet port — a sibling web tool in the same static
 architecture as [TB-3PO](../tb3po/) and [DrumMap](../drummap/).
+Also available as a **generator + stepped-playback** slot in the [Rack](../rack/).
 
 **Live:** <https://yakov.khalinsky.com/midi/apps/melogen/>
 
