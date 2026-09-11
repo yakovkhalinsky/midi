@@ -6,7 +6,7 @@
  * a screen) shows the selected slot's controls underneath. Slots are real
  * component instances (engine + voice + OLED renderer per slot), not iframes:
  * drummap's modules are loaded as namespaced copies (js/dm-*.js, DM_ prefixed
- * globals) so both apps' files coexist on one page.
+ * globals) and Melogen as js/mg-*.js (MG_ prefixed) so all apps coexist on one page.
  *
  * The rack owns: transport (BPM, clock division, RUN/STOP, CLOCK/RESET), the
  * global output destination (Web Audio | MIDI out), and one Web MIDI device.
@@ -276,6 +276,7 @@
           <select data-k="app">
             <option value="tb3po" selected>TB-3PO</option>
             <option value="drummap">DrumMap</option>
+            <option value="melogen">Melogen</option>
             <option value="">— empty —</option>
           </select>
           <span class="mon-label">CLOCK</span>
@@ -573,6 +574,7 @@
           <select data-k="app">
             <option value="drummap" selected>DrumMap</option>
             <option value="tb3po">TB-3PO</option>
+            <option value="melogen">Melogen</option>
             <option value="">— empty —</option>
           </select>
           <span class="mon-label">CLOCK</span>
@@ -704,6 +706,380 @@
   }
 
   // ==================================================================
+  // Slot: Melogen (generator + stepped playback — no piano roll)
+  // ==================================================================
+  function makeMelogenSlot(index, cell, controls) {
+    const STEP_BEAT = 0.25; // pattern grid = 16th notes in generator beat space
+    const ol = new OLED();
+    const s = {
+      index, app: 'melogen', div: 1, muted: false,
+      ol,
+      params: {
+        algo: 'random',
+        key: 0,
+        scale: 'major',
+        density: 0.55,
+        seed: 'a1b2c3d4',
+        length: 16,          // steps at 16th resolution
+        octLo: 3,
+        octHi: 5,
+        gate: 0.25,          // note duration in beats
+        pulses: 5,           // euclidean
+        direction: 'up',     // contour
+      },
+      voiceParams: {
+        volume: 0.28, cutoff: 1000, resonance: 10, envAmt: 2600,
+        accent: 1.0, slideMs: 5.2, releaseMs: 14,
+      },
+      midiParams: { channel: 0, velocity: 100, accentVel: 127, octave: 0 },
+      notes: [],
+      byStep: [],
+      step: 0,
+      gateUntil: 0,
+      voice: null,
+      cell, controls,
+    };
+
+    s.name = 'Melogen';
+
+    s.ensureVoice = function () {
+      if (!s.voice && rack.audioCtx) {
+        s.voice = new MelogenVoice(rack.audioCtx);
+        s.applyVoiceParams();
+      }
+    };
+
+    s.applyVoiceParams = function () {
+      if (!s.voice) return;
+      const v = s.voiceParams, p = s.voice.params;
+      p.volume = v.volume; p.cutoff = v.cutoff; p.resonance = v.resonance;
+      p.envAmt = v.envAmt; p.accent = v.accent;
+      p.slideTau = v.slideMs / 1000; p.releaseTau = v.releaseMs / 1000;
+      s.voice.applyParams();
+    };
+
+    s.regenerate = function () {
+      const P = s.params;
+      const lengthSteps = con(P.length | 0, 1, 32);
+      P.length = lengthSteps;
+      const lengthBeats = lengthSteps * STEP_BEAT;
+      const genParams = {
+        key: P.key,
+        scale: P.scale,
+        length: lengthBeats,
+        density: P.density,
+        seed: P.seed,
+        octLo: P.octLo,
+        octHi: P.octHi,
+        velocity: s.midiParams.velocity,
+        step: STEP_BEAT,
+        gate: P.gate,
+        pulses: P.pulses,
+        steps: lengthSteps,
+        direction: P.direction,
+      };
+      const raw = MG_runGenerator(P.algo, genParams);
+      s.notes = raw;
+      s.byStep = Array.from({ length: lengthSteps }, () => []);
+      for (const n of raw) {
+        let st = Math.round(n.start / STEP_BEAT);
+        if (st < 0) continue;
+        st = st % lengthSteps;
+        s.byStep[st].push(n);
+      }
+      if (s.step >= lengthSteps) s.step = 0;
+    };
+
+    s.applyEngine = function () { s.regenerate(); };
+    s.applyEngine();
+
+    /* ---- clock: advance on each slot edge; cycle = period * slot.div ---- */
+    s.onClock = function (t, cycle) {
+      if (s.muted) return;
+      const lengthSteps = s.params.length;
+      if (!lengthSteps) return;
+      const cur = s.step;
+      const toAudio = rack.outputDest === 'audio' && s.voice;
+      const toMidi = rack.outputDest === 'midi' && rack.midiOut && rack.midiOut.output;
+      const hits = s.byStep[cur] || [];
+      let any = false;
+      for (const n of hits) {
+        const pitch = con(n.pitch + (s.midiParams.octave | 0) * 12, 0, 127);
+        const vel = con(n.velocity | 0, 1, 127);
+        const accent = vel >= 100;
+        const durSec = Math.max(0.02, (n.duration / STEP_BEAT) * (cycle || 0.125));
+        if (toAudio) {
+          s.voice.noteOn(n.id, pitch, vel, t);
+          s.voice.noteOff(n.id, t + durSec);
+        } else if (toMidi) {
+          const ch = s.midiParams.channel & 0xf;
+          const midiVel = con(accent ? s.midiParams.accentVel : vel, 1, 127);
+          rack.midiOut.send([0x90 | ch, pitch, midiVel], t);
+          rack.midiOut.send([0x80 | ch, pitch, 0], t + durSec);
+          s.cell.flashMidi();
+        }
+        any = true;
+        s.gateUntil = t + durSec;
+      }
+      if (any) s.cell.leds.gate.classList.add('on');
+      s.step = (cur + 1) % lengthSteps;
+    };
+
+    s.reset = function () { s.step = 0; };
+
+    s.setDest = function () {
+      if (rack.outputDest === 'midi') { if (s.voice) s.voice.allOff(); }
+      else s.midiSilence();
+    };
+
+    s.midiSilence = function () {
+      const ch = s.midiParams.channel & 0xf;
+      rack.midiOut.send([0xb0 | ch, 123, 0]);
+    };
+
+    s.silence = function () {
+      if (s.voice) s.voice.allOff();
+      s.midiSilence();
+      s.gateUntil = 0;
+    };
+
+    s.tick = function (now) {
+      if (s.gateUntil && now >= s.gateUntil) {
+        s.gateUntil = 0;
+        s.cell.leds.gate.classList.remove('on');
+      }
+    };
+
+    s.render = function () {
+      const P = s.params;
+      ol.clear();
+      ol.print(1, 1, 'MELOGEN');
+      const algo = (MG_GENERATORS[P.algo] && MG_GENERATORS[P.algo].name) || P.algo;
+      ol.print(1, 12, String(algo).slice(0, 10));
+      const keyName = MG_NOTE_NAMES[P.key] || '?';
+      const scName = (MG_SCALES[P.scale] && MG_SCALES[P.scale].name) || P.scale;
+      ol.print(1, 22, (keyName + ' ' + scName).slice(0, 10));
+      ol.print(1, 34, (s.step + 1) + '/' + P.length);
+      ol.print(1, 44, String(P.seed).slice(0, 8));
+      // gated-step mini row
+      const n = Math.min(32, P.length);
+      for (let i = 0; i < n; i++) {
+        const x = 1 + i * 2;
+        if (s.byStep[i] && s.byStep[i].length) ol.px(x, 56);
+        if (i === s.step) ol.px(x, 58);
+      }
+      ol.blit(s.cell.oledCtx, 1, '#e8f4ff');
+      s.renderStrip();
+      s.renderLeds();
+    };
+
+    s.renderLeds = function () {
+      const now = rack.audioCtx ? rack.audioCtx.currentTime : performance.now() / 1000;
+      s.cell.leds.gate.classList.toggle('on', s.gateUntil > now);
+    };
+
+    s.renderStrip = function () {
+      const ctx = s.cell.stripCtx, w = s.cell.stripW, h = s.cell.stripH;
+      ctx.clearRect(0, 0, w, h);
+      const len = s.params.length;
+      const cellW = w / Math.max(len, 1);
+      for (let i = 0; i < len; i++) {
+        const x = i * cellW;
+        const isCur = i === s.step;
+        ctx.fillStyle = isCur ? 'rgba(126,220,255,0.16)' : 'rgba(255,255,255,0.04)';
+        ctx.fillRect(x + 1, 2, cellW - 2, h - 4);
+        const hits = s.byStep[i] || [];
+        if (!hits.length) continue;
+        const acc = hits.some((n) => (n.velocity | 0) >= 100);
+        ctx.fillStyle = acc ? '#ffb454' : '#7fe3a0';
+        ctx.fillRect(x + 1.5, 4, Math.max(1, cellW - 3), (h - 6) * (acc ? 1 : 0.62));
+      }
+    };
+
+    s.buildControls = function (host) {
+      const P = s.params, V = s.voiceParams, M = s.midiParams;
+      const algoOpts = MG_listGenerators().map((g) =>
+        `<option value="${g.id}">${g.name}</option>`).join('');
+      const scaleOpts = Object.keys(MG_SCALES).map((k) =>
+        `<option value="${k}">${MG_SCALES[k].name}</option>`).join('');
+      const keyOpts = MG_NOTE_NAMES.map((n, i) =>
+        `<option value="${i}">${n}</option>`).join('');
+      host.innerHTML = `
+        <div class="controls-head">
+          <span class="mon-label">APP</span>
+          <select data-k="app">
+            <option value="melogen" selected>Melogen</option>
+            <option value="tb3po">TB-3PO</option>
+            <option value="drummap">DrumMap</option>
+            <option value="">— empty —</option>
+          </select>
+          <span class="mon-label">CLOCK</span>
+          <select data-k="div">${[1,2,3,4,6,8].map(n => `<option value="${n}">÷${n}</option>`).join('')}</select>
+          <label class="switch"><input type="checkbox" data-k="muted"><span>mute</span></label>
+        </div>
+        <div class="controls-grid">
+          <div class="group">
+            <h2>Generator</h2>
+            <div class="row"><label class="grow">algo</label><select data-k="algo">${algoOpts}</select></div>
+            <div class="row"><label class="grow">key</label><select data-k="key">${keyOpts}</select>
+              <label>scale</label><select data-k="scale">${scaleOpts}</select></div>
+            <div class="row"><label class="grow">density <span class="val" data-k="densityVal"></span></label>
+              <input type="range" data-k="density" min="0" max="1" step="0.01"></div>
+            <div class="row"><label class="grow">length (steps) <span class="val" data-k="lengthVal"></span></label>
+              <input type="range" data-k="length" min="1" max="32" step="1"></div>
+            <div class="row"><label class="grow">gate <span class="val" data-k="gateVal"></span></label>
+              <select data-k="gate">
+                <option value="0.0625">1/16</option><option value="0.125">1/8</option>
+                <option value="0.25">1/4</option><option value="0.5">1/2</option>
+              </select></div>
+            <div class="row"><label class="grow">oct lo</label><select data-k="octLo"></select>
+              <label>hi</label><select data-k="octHi"></select></div>
+            <div class="row"><label class="grow">seed</label>
+              <input class="hex" data-k="seed" maxlength="8" style="width:6.5em">
+              <button data-k="randSeed" class="small-btn">random</button>
+              <button data-k="regen" class="small-btn">regenerate</button></div>
+            <p class="tip">Pattern length is in 16th-note steps (matches shared clock at ÷4). Same seed + settings = same notes.</p>
+          </div>
+          <div class="group" data-k="euclidGroup">
+            <h2>Euclidean</h2>
+            <div class="row"><label class="grow">pulses <span class="val" data-k="pulsesVal"></span></label>
+              <input type="range" data-k="pulses" min="1" max="32" step="1"></div>
+          </div>
+          <div class="group" data-k="contourGroup">
+            <h2>Contour</h2>
+            <div class="row"><label class="grow">direction</label>
+              <select data-k="direction">
+                <option value="up">up</option><option value="down">down</option>
+                <option value="updown">up-down</option><option value="downup">down-up</option>
+                <option value="random">random</option>
+              </select></div>
+          </div>
+          <div class="group audio-only">
+            <h2>Voice</h2>
+            <div class="row"><label class="grow">volume <span class="val" data-k="volVal"></span></label><input type="range" data-k="volume" min="0" max="0.6" step="0.01"></div>
+            <div class="row"><label class="grow">cutoff <span class="val" data-k="cutoffVal"></span></label><input type="range" data-k="cutoff" min="120" max="4000" step="10"></div>
+            <div class="row"><label class="grow">resonance <span class="val" data-k="resVal"></span></label><input type="range" data-k="resonance" min="1" max="20" step="0.1"></div>
+            <div class="row"><label class="grow">filter env <span class="val" data-k="envVal"></span></label><input type="range" data-k="env" min="0" max="6000" step="50"></div>
+            <div class="row"><label class="grow">accent <span class="val" data-k="accentVal"></span></label><input type="range" data-k="vaccent" min="0" max="2" step="0.1"></div>
+            <div class="row"><label class="grow">glide <span class="val" data-k="glideVal"></span></label><input type="range" data-k="glide" min="1" max="30" step="0.1"></div>
+            <div class="row"><label class="grow">release <span class="val" data-k="releaseVal"></span></label><input type="range" data-k="release" min="2" max="60" step="1"></div>
+          </div>
+          <div class="group midi-only">
+            <h2>MIDI out</h2>
+            <div class="row"><label>channel</label><select data-k="channel"></select>
+              <label>oct</label><select data-k="moctave"></select></div>
+            <div class="row"><label class="grow">velocity <span class="val" data-k="velVal"></span></label><input type="range" data-k="velocity" min="1" max="127" step="1"></div>
+            <div class="row"><label class="grow">accent vel <span class="val" data-k="accVelVal"></span></label><input type="range" data-k="accvel" min="1" max="127" step="1"></div>
+            <p class="tip">Accent when note velocity ≥ 100 · octave shifts MIDI pitch.</p>
+          </div>
+        </div>`;
+      const q = (k) => host.querySelector('[data-k="' + k + '"]');
+      const regen = () => { s.applyEngine(); saveSoon(); };
+
+      const bindings = [
+        ['algo', 'change', () => { P.algo = q('algo').value; regen(); s.syncControls(); }],
+        ['key', 'change', () => { P.key = parseInt(q('key').value, 10); regen(); }],
+        ['scale', 'change', () => { P.scale = q('scale').value; regen(); }],
+        ['density', 'input', () => { P.density = parseFloat(q('density').value); }],
+        ['density', 'change', () => { P.density = parseFloat(q('density').value); regen(); }],
+        ['length', 'input', () => { P.length = parseInt(q('length').value, 10); }],
+        ['length', 'change', () => { P.length = parseInt(q('length').value, 10); regen(); }],
+        ['gate', 'change', () => { P.gate = parseFloat(q('gate').value); regen(); }],
+        ['octLo', 'change', () => { P.octLo = parseInt(q('octLo').value, 10); if (P.octHi < P.octLo) P.octHi = P.octLo; regen(); }],
+        ['octHi', 'change', () => { P.octHi = parseInt(q('octHi').value, 10); if (P.octHi < P.octLo) P.octLo = P.octHi; regen(); }],
+        ['pulses', 'input', () => { P.pulses = parseInt(q('pulses').value, 10); }],
+        ['pulses', 'change', () => { P.pulses = parseInt(q('pulses').value, 10); regen(); }],
+        ['direction', 'change', () => { P.direction = q('direction').value; regen(); }],
+        ['volume', 'input', () => { V.volume = parseFloat(q('volume').value); s.applyVoiceParams(); }],
+        ['cutoff', 'input', () => { V.cutoff = parseFloat(q('cutoff').value); s.applyVoiceParams(); }],
+        ['resonance', 'input', () => { V.resonance = parseFloat(q('resonance').value); s.applyVoiceParams(); }],
+        ['env', 'input', () => { V.envAmt = parseFloat(q('env').value); s.applyVoiceParams(); }],
+        ['vaccent', 'input', () => { V.accent = parseFloat(q('vaccent').value); s.applyVoiceParams(); }],
+        ['glide', 'input', () => { V.slideMs = parseFloat(q('glide').value); s.applyVoiceParams(); }],
+        ['release', 'input', () => { V.releaseMs = parseFloat(q('release').value); s.applyVoiceParams(); }],
+        ['channel', 'change', () => { M.channel = parseInt(q('channel').value, 10); }],
+        ['moctave', 'change', () => { M.octave = parseInt(q('moctave').value, 10); }],
+        ['velocity', 'input', () => { M.velocity = parseInt(q('velocity').value, 10); }],
+        ['accvel', 'input', () => { M.accentVel = parseInt(q('accvel').value, 10); }],
+        ['app', 'change', () => { changeSlotApp(s, q('app').value); }],
+        ['div', 'change', () => { s.div = parseInt(q('div').value, 10) || 1; }],
+        ['muted', 'change', () => { s.muted = q('muted').checked; if (s.muted) s.silence(); setCellName(s); }],
+      ];
+      for (const [k, ev, fn] of bindings) {
+        const el = q(k);
+        if (el) el.addEventListener(ev, () => { fn(); if (ev !== 'change' || k === 'density' || k === 'length' || k === 'pulses') { /* save in regen or below */ } saveSoon(); });
+      }
+      q('randSeed').addEventListener('click', () => { P.seed = MG_randomSeedHex(); s.syncControls(); regen(); });
+      q('regen').addEventListener('click', () => regen());
+      q('seed').addEventListener('change', () => { P.seed = q('seed').value.trim() || MG_randomSeedHex(); regen(); s.syncControls(); });
+
+      s.controlsHost = host;
+      s.syncControls();
+    };
+
+    s.syncControls = function () {
+      const host = s.controlsHost;
+      if (!host) return;
+      const P = s.params, V = s.voiceParams, M = s.midiParams;
+      const q = (k) => host.querySelector('[data-k="' + k + '"]');
+      const setV = (k, v) => { const el = q(k + 'Val'); if (el) el.textContent = v; };
+      q('app').value = s.app;
+      q('div').value = String(s.div);
+      q('muted').checked = s.muted;
+      q('algo').value = P.algo;
+      q('key').value = String(P.key);
+      q('scale').value = P.scale;
+      q('density').value = P.density; setV('density', Math.round(P.density * 100) + '%');
+      q('length').value = P.length; setV('length', P.length);
+      q('gate').value = String(P.gate);
+      setV('gate', ({ 0.0625: '1/16', 0.125: '1/8', 0.25: '1/4', 0.5: '1/2' })[P.gate] || P.gate);
+      q('octLo').value = String(P.octLo);
+      q('octHi').value = String(P.octHi);
+      q('seed').value = P.seed;
+      q('pulses').value = P.pulses; setV('pulses', P.pulses);
+      q('direction').value = P.direction;
+      const eg = q('euclidGroup'), cg = q('contourGroup');
+      if (eg) eg.style.display = P.algo === 'euclidean' ? '' : 'none';
+      if (cg) cg.style.display = P.algo === 'contour' ? '' : 'none';
+      setV('vol', Math.round(V.volume * 100) + '%'); q('volume').value = V.volume;
+      setV('cutoff', Math.round(V.cutoff) + ' Hz'); q('cutoff').value = V.cutoff;
+      setV('resonance', V.resonance.toFixed(1)); q('resonance').value = V.resonance;
+      setV('env', Math.round(V.envAmt) + ' Hz'); q('env').value = V.envAmt;
+      setV('accent', '×' + V.accent.toFixed(1)); q('vaccent').value = V.accent;
+      setV('glide', V.slideMs.toFixed(1) + ' ms'); q('glide').value = V.slideMs;
+      setV('release', Math.round(V.releaseMs) + ' ms'); q('release').value = V.releaseMs;
+      q('channel').value = String(M.channel);
+      q('moctave').value = String(M.octave);
+      setV('vel', M.velocity); q('velocity').value = M.velocity;
+      setV('accVel', M.accentVel); q('accvel').value = M.accentVel;
+    };
+
+    s.buildControlsStatics = function () {
+      const q = (k) => s.controlsHost.querySelector('[data-k="' + k + '"]');
+      for (const sel of [q('octLo'), q('octHi')]) {
+        for (let o = 1; o <= 7; o++) {
+          const opt = document.createElement('option');
+          opt.value = o; opt.textContent = String(o);
+          sel.appendChild(opt);
+        }
+      }
+      const mo = q('moctave');
+      for (let o = -2; o <= 2; o++) {
+        const b = document.createElement('option'); b.value = o; b.textContent = fmtSigned(o); mo.appendChild(b);
+      }
+      const ch = q('channel');
+      for (let c = 0; c < 16; c++) {
+        const opt = document.createElement('option');
+        opt.value = c; opt.textContent = 'ch ' + (c + 1);
+        ch.appendChild(opt);
+      }
+    };
+
+    return s;
+  }
+
+
+  // ==================================================================
   // Slot plumbing (cells, creation, selection)
   // ==================================================================
   function makeEmptySlotShell(index, cell, controls) {
@@ -721,6 +1097,7 @@
               <option value="" selected>— empty —</option>
               <option value="tb3po">TB-3PO</option>
               <option value="drummap">DrumMap</option>
+              <option value="melogen">Melogen</option>
             </select>
             <span class="tip inline">pick an app for slot ${index + 1}</span>
           </div>`;
@@ -743,6 +1120,7 @@
     $('controls').appendChild(controls);
     const s = (app === 'tb3po') ? makeTB3POSlot(index, cell, controls)
       : (app === 'drummap') ? makeDrumMapSlot(index, cell, controls)
+      : (app === 'melogen') ? makeMelogenSlot(index, cell, controls)
       : makeEmptySlotShell(index, cell, controls);
     s.buildControls(controls);
     if (s.buildControlsStatics) s.buildControlsStatics();
@@ -751,7 +1129,7 @@
   }
 
   function changeSlotApp(slot, app) {
-    if (!(app === 'tb3po' || app === 'drummap')) app = null;
+    if (!(app === 'tb3po' || app === 'drummap' || app === 'melogen')) app = null;
     if (app === slot.app) return;
     slot.silence && slot.silence();
     slot.cell.remove();
@@ -894,7 +1272,7 @@
     for (const s of rack.slots) {
       if (!s.app || s.muted) continue;
       if ((rack.edgeIndex - 1) % s.div !== 0) continue;
-      if (s.app === 'tb3po') s.onClock(t, period() * s.div);
+      if (s.app === 'tb3po' || s.app === 'melogen') s.onClock(t, period() * s.div);
       else s.onClock(t);
     }
   }
@@ -979,6 +1357,7 @@
     if (sd.midiParams) Object.assign(slot.midiParams, sd.midiParams);
     if (slot.app === 'tb3po') slot.applyEngine();
     if (slot.app === 'drummap') { slot.applyEngine(); slot.applyVoiceParams(); }
+    if (slot.app === 'melogen') { slot.applyEngine(); slot.applyVoiceParams(); }
   }
 
   // ==================================================================
@@ -1050,7 +1429,7 @@
       : [{ app: 'tb3po' }, {}, {}];   // fresh visitors: slot 1 starts with TB-3PO
     for (let i = 0; i < 3; i++) {
       const sd = slotsCfg[i] || {};
-      const app = (sd.app === 'tb3po' || sd.app === 'drummap') ? sd.app : null;
+      const app = (sd.app === 'tb3po' || sd.app === 'drummap' || sd.app === 'melogen') ? sd.app : null;
       const s = createSlot(i, app);
       if (app) applySlotConfig(s, sd);
       rack.slots.push(s);
