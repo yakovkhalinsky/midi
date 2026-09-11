@@ -31,7 +31,7 @@ secure context (`https://` or `http://localhost`).
   - **Contour / arp** — up, down, up-down, down-up, random; gate length; arp octaves
 - **Piano roll** — pitch gutter, beat/bar grid, draw, select/move, resize duration, delete, Alt-drag velocity, snap, playhead, scroll/zoom
 - **Transport** — play/stop, BPM, loop, pattern length
-- **Output** — soft saw Web Audio voice, or Web MIDI out (device + channel) like the sibling apps
+- **Output** — soft saw Web Audio voice with TB-3PO-style filter/amp envelope controls (cutoff, resonance, filter env, accent, glide, release), or Web MIDI out (device + channel) like the sibling apps
 - **Generate** — replace or append (toggle)
 
 ## Files
@@ -44,7 +44,7 @@ secure context (`https://` or `http://localhost`).
 | `js/scales.js` | keys, scale tables, pitch helpers |
 | `js/generators.js` | pluggable generators |
 | `js/roll.js` | canvas piano roll |
-| `js/synth.js` | Web Audio polyphonic preview voice |
+| `js/synth.js` | Web Audio polyphonic preview voice (per-note filter + TB-3PO-style envelopes) |
 | `js/midi.js` | shared Web MIDI helper (same as siblings) |
 | `js/app.js` | transport, UI wiring, persistence |
 | `_selftest.html` | headless checks (determinism, note model, MIDI stub, offline audio) |

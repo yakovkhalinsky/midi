@@ -85,17 +85,32 @@ check('midi note-off', midiSent[1].b[0] === 0x80 && midiSent[1].b[1] === 60, JSO
 mo.allOff();
 check('midi all-notes-off', midiSent[2].b[0] === 0xb0 && midiSent[2].b[1] === 123, JSON.stringify(midiSent[2].b));
 
-// ---------- synth offline ----------
+// ---------- synth params / offline ----------
 async function synthTest() {
   try {
     const sr = 44100;
-    const oc = new OfflineAudioContext(1, Math.floor(sr * 0.3), sr);
+    const oc = new OfflineAudioContext(1, Math.floor(sr * 0.35), sr);
     const v = new MelogenVoice(oc);
+    const p = v.params;
+    check('synth has envelope params',
+      typeof p.cutoff === 'number' && typeof p.resonance === 'number' &&
+      typeof p.envAmt === 'number' && typeof p.accent === 'number' &&
+      typeof p.slideTau === 'number' && typeof p.releaseTau === 'number' &&
+      typeof p.attack === 'number' && typeof p.volume === 'number',
+      JSON.stringify({cutoff:p.cutoff, reso:p.resonance, env:p.envAmt, accent:p.accent, slide:p.slideTau, rel:p.releaseTau}));
     v.params.volume = 0.35;
-    v.noteOn('a', 60, 100, 0.01);
-    v.noteOff('a', 0.12);
-    v.noteOn('b', 64, 90, 0.05);
-    v.noteOff('b', 0.18);
+    v.params.cutoff = 1000;
+    v.params.resonance = 10;
+    v.params.envAmt = 2600;
+    v.params.accent = 1;
+    v.params.slideTau = 0.0052;
+    v.params.releaseTau = 0.014;
+    // accented (≥100) then non-accented with glide from lastPitch
+    v.noteOn('a', 60, 110, 0.01);
+    v.noteOff('a', 0.10);
+    v.noteOn('b', 64, 80, 0.12); // glide from 60
+    v.noteOff('b', 0.22);
+    v.applyParams();
     const buf = await oc.startRendering();
     const d = buf.getChannelData(0);
     let peak = 0, rms = 0;
@@ -106,6 +121,7 @@ async function synthTest() {
     }
     rms = Math.sqrt(rms / d.length);
     check('voice renders audio', peak > 0.01 && rms > 1e-4, 'peak ' + peak.toFixed(3) + ' rms ' + rms.toFixed(4));
+    check('noteOn/off no throw with glide+accent', true);
   } catch (err) {
     results.push('FAIL synth test threw: ' + err);
   }
