@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Melogen — melody generator + piano roll</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <div class="logo-mark" aria-hidden="true">♪</div>
+    <div class="title">
+      <h1>Melogen <span class="sub">— melody generator</span></h1>
+      <p>Generate melodies with pluggable algorithms (random-in-scale, Markov, Euclidean, contour/arp),
+         then edit on a piano roll. Web Audio preview or Web MIDI out. Deterministic when the seed is set.</p>
+    </div>
+    <a class="back" href="../../">← all apps</a>
+  </header>
+
+  <main>
+    <section class="panel roll-panel">
+      <div class="transport">
+        <button id="runBtn" class="big-btn">PLAY</button>
+        <div class="bpm-wrap">
+          <label for="bpm">BPM</label>
+          <input id="bpm" type="number" min="20" max="300" step="1" value="120">
+        </div>
+        <label class="switch"><input id="loopOn" type="checkbox" checked><span>loop</span></label>
+        <div class="bpm-wrap">
+          <label for="snap">snap</label>
+          <select id="snap">
+            <option value="1">1/1</option>
+            <option value="0.5">1/2</option>
+            <option value="0.25" selected>1/4</option>
+            <option value="0.125">1/8</option>
+            <option value="0.0625">1/16</option>
+            <option value="0.03125">1/32</option>
+          </select>
+        </div>
+        <button id="delBtn" class="big-btn tap" title="Delete selected notes">DEL</button>
+        <button id="clearBtn" class="big-btn tap">CLEAR</button>
+        <div class="mon-item"><span class="mon-label" id="noteCount">0 notes</span></div>
+        <div class="led-wrap"><span class="led purple" id="midiLed"></span><span class="led-label">MIDI</span></div>
+      </div>
+
+      <div class="roll-wrap">
+        <canvas id="roll"></canvas>
+      </div>
+      <div class="roll-caption">
+        click-drag empty grid to draw · drag notes to move · right-edge to resize ·
+        Alt-drag for velocity · right-click / Del to delete · scroll to pan · Ctrl+scroll zoom ·
+        <span id="selInfo">no selection</span>
+      </div>
+    </section>
+
+    <section class="panel side">
+      <div class="group">
+        <h2>Generate</h2>
+        <div class="row">
+          <label for="algo">algorithm</label>
+          <select id="algo"></select>
+        </div>
+        <div id="algoParams"></div>
+        <div class="row">
+          <label class="grow" for="density">density <span id="densityVal" class="val">0.55</span></label>
+          <input id="density" type="range" min="0" max="1" step="0.05" value="0.55">
+        </div>
+        <div class="row">
+          <label class="grow" for="length">length (beats) <span id="lengthVal" class="val">8</span></label>
+          <input id="length" type="range" min="1" max="32" step="1" value="8">
+        </div>
+        <div class="row">
+          <label for="seed">seed</label>
+          <input id="seed" type="text" spellcheck="false" value="00000001" class="seed-input">
+          <button id="randSeed" title="Randomize seed">🎲</button>
+        </div>
+        <div class="row switches">
+          <label class="switch"><input id="appendMode" type="checkbox"><span>append (else replace)</span></label>
+        </div>
+        <div class="row">
+          <button id="genBtn" class="big-btn gen">GENERATE</button>
+        </div>
+        <p class="tip">Same seed + settings → same notes. Append layers a new generation onto the current roll.</p>
+      </div>
+
+      <div class="group">
+        <h2>Key &amp; range</h2>
+        <div class="row">
+          <label for="key">key</label>
+          <select id="key"></select>
+          <label for="scale">scale</label>
+          <select id="scale"></select>
+        </div>
+        <div class="row">
+          <label for="octLo">oct lo</label>
+          <input id="octLo" type="number" min="0" max="8" value="3" class="num">
+          <label for="octHi">oct hi</label>
+          <input id="octHi" type="number" min="0" max="8" value="5" class="num">
+        </div>
+      </div>
+
+      <div class="group">
+        <h2>Output</h2>
+        <div class="row">
+          <label for="outputDest">destination</label>
+          <select id="outputDest">
+            <option value="audio" selected>Web Audio</option>
+            <option value="midi">MIDI out</option>
+          </select>
+        </div>
+
+        <div id="audioGroup" class="audio-rows">
+          <div class="row">
+            <label class="grow" for="vol">volume <span id="volVal" class="val">28%</span></label>
+            <input id="vol" type="range" min="0" max="0.6" step="0.01" value="0.28">
+          </div>
+          <div class="row">
+            <label class="grow" for="cutoff">cutoff <span id="cutoffVal" class="val">1800 Hz</span></label>
+            <input id="cutoff" type="range" min="200" max="8000" step="10" value="1800">
+          </div>
+        </div>
+
+        <div id="midiGroup" class="dimmed">
+          <div class="row">
+            <label for="midiDevice">device</label>
+            <select id="midiDevice"></select>
+          </div>
+          <div class="row">
+            <label for="midiChannel">channel</label>
+            <select id="midiChannel"></select>
+            <button id="midiPanic" type="button">panic</button>
+          </div>
+          <p class="tip" id="midiStatus">Web MIDI needs Chromium + https/localhost.</p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    Part of the <a href="../../">web sequencer ports</a> ·
+    <a href="_selftest.html">selftest</a> ·
+    <a href="https://github.com/yakovkhalinsky/midi" target="_blank" rel="noopener">source</a>
+  </footer>
+
+  <script src="js/notes.js"></script>
+  <script src="js/scales.js"></script>
+  <script src="js/generators.js"></script>
+  <script src="js/roll.js"></script>
+  <script src="js/synth.js"></script>
+  <script src="js/midi.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

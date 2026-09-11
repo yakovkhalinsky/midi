@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>melogen selftest</title></head>
+<body>
+<pre id="out">running...</pre>
+<script src="js/notes.js"></script>
+<script src="js/scales.js"></script>
+<script src="js/generators.js"></script>
+<script src="js/synth.js"></script>
+<script src="js/midi.js"></script>
+<script>
+window.onerror = function (msg, src, line) {
+  document.getElementById('out').textContent += '\nPAGE ERROR: ' + msg + ' @' + src + ':' + line;
+};
+const results = [];
+function check(name, cond, extra) {
+  results.push((cond ? 'PASS ' : 'FAIL ') + name + (extra !== undefined ? ' [' + extra + ']' : ''));
+}
+
+// ---------- note model ----------
+const n1 = makeNote(60, 0, 0.5, 100);
+check('note fields', n1.pitch === 60 && n1.start === 0 && n1.duration === 0.5 && n1.velocity === 100 && n1.id > 0);
+const n2 = makeNote(200, -1, 0, 0);
+check('note clamps', n2.pitch === 127 && n2.start === 0 && n2.duration >= 1/64 && n2.velocity >= 1);
+check('snapBeat', snapBeat(0.3, 0.25) === 0.25 && snapBeat(0.4, 0.25) === 0.5, snapBeat(0.3, 0.25));
+check('notesEqual identical', notesEqual([makeNote(60,0,1,100,1)], [makeNote(60,0,1,100,2)]));
+check('notesEqual differs', !notesEqual([makeNote(60,0,1,100)], [makeNote(61,0,1,100)]));
+
+// ---------- scales ----------
+const majC = scalePitches(0, 'major', 60, 71);
+check('C major pitches', JSON.stringify(majC) === JSON.stringify([60,62,64,65,67,69,71]), JSON.stringify(majC));
+check('nearestInScale', nearestInScale(61, 0, 'major') === 60 || nearestInScale(61, 0, 'major') === 62, nearestInScale(61, 0, 'major'));
+
+// ---------- PRNG / seed ----------
+const r1 = mulberry32(parseSeed('0xabcd'));
+const r2 = mulberry32(parseSeed('0xabcd'));
+const seq1 = [r1(), r1(), r1()];
+const seq2 = [r2(), r2(), r2()];
+check('mulberry32 deterministic', JSON.stringify(seq1) === JSON.stringify(seq2));
+check('parseSeed hex', parseSeed('0x10') === 16);
+check('parseSeed decimal', parseSeed('42') === 42);
+
+// ---------- generators: same seed → same notes ----------
+const common = { key: 0, scale: 'major', length: 8, density: 0.6, octLo: 4, octHi: 5, seed: 'deadbeef', step: 0.25, gate: 0.25 };
+
+['random', 'markov', 'euclidean', 'contour'].forEach((id) => {
+  const a = runGenerator(id, Object.assign({}, common, id === 'euclidean' ? { pulses: 5, steps: 16 } : {}));
+  const b = runGenerator(id, Object.assign({}, common, id === 'euclidean' ? { pulses: 5, steps: 16 } : {}));
+  check(id + ' deterministic', notesEqual(a, b), 'n=' + a.length);
+  check(id + ' produces notes', a.length > 0, a.length);
+  check(id + ' pitches in MIDI', a.every((n) => n.pitch >= 0 && n.pitch <= 127));
+  check(id + ' starts in range', a.every((n) => n.start >= 0 && n.start < 8));
+});
+
+// different seed → different (usually)
+const d1 = runGenerator('random', Object.assign({}, common, { seed: 'aaaa' }));
+const d2 = runGenerator('random', Object.assign({}, common, { seed: 'bbbb' }));
+check('different seeds diverge', !notesEqual(d1, d2));
+
+// euclidean pulse count
+const euc = runGenerator('euclidean', Object.assign({}, common, { pulses: 5, steps: 16, density: 1, length: 4 }));
+check('euclidean pulse count', euc.length === 5, euc.length);
+
+// contour up is ascending when dense
+const up = runGenerator('contour', Object.assign({}, common, {
+  direction: 'up', density: 1, step: 0.25, gate: 0.25, octaves: 1, octLo: 4, octHi: 5, length: 2,
+}));
+let asc = true;
+for (let i = 1; i < Math.min(up.length, 4); i++) {
+  if (up[i].pitch < up[i - 1].pitch) asc = false;
+}
+check('contour up mostly ascending early', asc || up.length < 2, up.slice(0, 4).map((n) => n.pitch).join(','));
+
+// ---------- MidiOut helper (stub) ----------
+const midiSent = [];
+const fakeMidiOut = { id: 'x1', name: 'Stub Synth', send: (b, ts) => midiSent.push({ b, ts }) };
+const mo = new MidiOut(() => 5.0);
+mo.access = { outputs: new Map([['x1', fakeMidiOut]]) };
+mo.select('x1');
+mo.channel = 0;
+mo.noteOn(60, 100, undefined);
+check('midi note-on', midiSent[0].b[0] === 0x90 && midiSent[0].b[1] === 60 && midiSent[0].b[2] === 100, JSON.stringify(midiSent[0].b));
+mo.noteOff(60, undefined);
+check('midi note-off', midiSent[1].b[0] === 0x80 && midiSent[1].b[1] === 60, JSON.stringify(midiSent[1].b));
+mo.allOff();
+check('midi all-notes-off', midiSent[2].b[0] === 0xb0 && midiSent[2].b[1] === 123, JSON.stringify(midiSent[2].b));
+
+// ---------- synth offline ----------
+async function synthTest() {
+  try {
+    const sr = 44100;
+    const oc = new OfflineAudioContext(1, Math.floor(sr * 0.3), sr);
+    const v = new MelogenVoice(oc);
+    v.params.volume = 0.35;
+    v.noteOn('a', 60, 100, 0.01);
+    v.noteOff('a', 0.12);
+    v.noteOn('b', 64, 90, 0.05);
+    v.noteOff('b', 0.18);
+    const buf = await oc.startRendering();
+    const d = buf.getChannelData(0);
+    let peak = 0, rms = 0;
+    for (let i = 0; i < d.length; i++) {
+      const a = Math.abs(d[i]);
+      if (a > peak) peak = a;
+      rms += d[i] * d[i];
+    }
+    rms = Math.sqrt(rms / d.length);
+    check('voice renders audio', peak > 0.01 && rms > 1e-4, 'peak ' + peak.toFixed(3) + ' rms ' + rms.toFixed(4));
+  } catch (err) {
+    results.push('FAIL synth test threw: ' + err);
+  }
+  finish();
+}
+
+function finish() {
+  const pass = results.filter((r) => r.startsWith('PASS')).length;
+  const fail = results.length - pass;
+  document.getElementById('out').textContent =
+    'RESULTS pass=' + pass + ' fail=' + fail + '\n' + results.join('\n');
+  midiDiag();
+}
+
+synthTest();
+
+async function midiDiag() {
+  const out = document.getElementById('out');
+  if (!navigator.requestMIDIAccess) {
+    out.textContent += '\nMIDI diag: no requestMIDIAccess';
+    return;
+  }
+  try {
+    const acc = await navigator.requestMIDIAccess({ sysex: false });
+    const outs = [...acc.outputs.values()];
+    out.textContent += '\nMIDI diag: access granted — ' + outs.length + ' outputs';
+  } catch (err) {
+    out.textContent += '\nMIDI diag: rejected — ' + (err && err.message);
+  }
+}
+</script>
+</body>
+</html>
