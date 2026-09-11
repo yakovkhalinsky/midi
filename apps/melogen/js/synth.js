@@ -1,7 +1,8 @@
 'use strict';
 /*
- * Simple polyphonic Web Audio voice for Melogen preview.
- * Soft saw → lowpass → per-note gain envelope → master.
+ * Polyphonic Web Audio voice for Melogen preview.
+ * Per note: saw → resonant lowpass (filter env) → amp → shared master/limiter.
+ * Envelope / accent / glide feel mirrors TB-3PO's AcidVoice, adapted for polyphony.
  */
 
 function midiToFreq(midi) {
@@ -13,22 +14,18 @@ class MelogenVoice {
     this.ctx = ctx;
     this.params = {
       volume: 0.28,
-      cutoff: 1800,
-      resonance: 1.2,
-      attack: 0.008,
-      decay: 0.08,
-      sustain: 0.55,
-      release: 0.12,
+      cutoff: 1000,       // Hz — slightly brighter than TB-3PO's 550 for leads
+      resonance: 10,      // Q (TB-3PO default)
+      envAmt: 2600,       // Hz added at gate-on
+      accent: 1.0,        // multiplier for amp + filter when accented
+      slideTau: 0.0052,   // seconds (~5.2 ms TB-3PO default)
+      releaseTau: 0.014,  // seconds (14 ms)
+      attack: 0.002,      // seconds (~2 ms)
       wave: 'sawtooth',
     };
 
     this.master = ctx.createGain();
     this.master.gain.value = this.params.volume;
-
-    this.filter = ctx.createBiquadFilter();
-    this.filter.type = 'lowpass';
-    this.filter.frequency.value = this.params.cutoff;
-    this.filter.Q.value = this.params.resonance;
 
     this.limiter = ctx.createDynamicsCompressor();
     this.limiter.threshold.value = -8;
@@ -36,19 +33,23 @@ class MelogenVoice {
     this.limiter.attack.value = 0.003;
     this.limiter.release.value = 0.1;
 
-    this.filter.connect(this.master);
     this.master.connect(this.limiter);
     this.limiter.connect(ctx.destination);
 
-    this.active = new Map(); // id -> { osc, gain }
+    this.active = new Map(); // id -> { osc, filter, gain, pitch }
+    this.lastPitch = null;
   }
 
   applyParams() {
     const p = this.params;
     const t = this.ctx.currentTime;
     this.master.gain.setTargetAtTime(p.volume, t, 0.03);
-    this.filter.frequency.setTargetAtTime(p.cutoff, t, 0.03);
-    this.filter.Q.setTargetAtTime(p.resonance, t, 0.03);
+    // Live Q updates for sounding notes; cutoff is the envelope base for new notes
+    for (const v of this.active.values()) {
+      try {
+        v.filter.Q.setTargetAtTime(p.resonance, t, 0.03);
+      } catch (e) { /* node gone */ }
+    }
   }
 
   noteOn(id, pitch, velocity, when) {
@@ -56,22 +57,41 @@ class MelogenVoice {
     const t = Math.max(when != null ? when : ctx.currentTime, ctx.currentTime);
     this.noteOff(id, t); // retrigger same id
 
+    const p = this.params;
+    const accented = (velocity | 0) >= 100;
+    const accentBoost = accented ? p.accent : 0;
+
     const osc = ctx.createOscillator();
-    osc.type = this.params.wave;
-    osc.frequency.setValueAtTime(midiToFreq(pitch), t);
+    osc.type = p.wave;
+
+    const targetFreq = midiToFreq(pitch);
+    const canGlide = this.lastPitch != null && p.slideTau > 0.0005;
+    if (canGlide) {
+      osc.frequency.setValueAtTime(midiToFreq(this.lastPitch), t);
+      osc.frequency.setTargetAtTime(targetFreq, t, p.slideTau);
+    } else {
+      osc.frequency.setValueAtTime(targetFreq, t);
+    }
+    this.lastPitch = pitch;
+
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.Q.setValueAtTime(p.resonance, t);
+    const peak = p.cutoff + p.envAmt * (1 + accentBoost);
+    filter.frequency.setValueAtTime(peak, t);
+    filter.frequency.setTargetAtTime(p.cutoff, t, 0.09);
 
     const gain = ctx.createGain();
-    const amp = (velocity / 127) * 0.45;
-    const p = this.params;
+    const ampLevel = 0.5 * (1 + accentBoost);
     gain.gain.setValueAtTime(0.0001, t);
-    gain.gain.linearRampToValueAtTime(amp, t + p.attack);
-    gain.gain.linearRampToValueAtTime(amp * p.sustain, t + p.attack + p.decay);
+    gain.gain.linearRampToValueAtTime(ampLevel, t + p.attack);
 
-    osc.connect(gain);
-    gain.connect(this.filter);
+    osc.connect(filter);
+    filter.connect(gain);
+    gain.connect(this.master);
     osc.start(t);
 
-    this.active.set(id, { osc, gain, pitch });
+    this.active.set(id, { osc, filter, gain, pitch });
   }
 
   noteOff(id, when) {
@@ -80,28 +100,32 @@ class MelogenVoice {
     const ctx = this.ctx;
     const t = Math.max(when != null ? when : ctx.currentTime, ctx.currentTime);
     const p = this.params;
+    const stopAfter = p.releaseTau * 8 + 0.05;
     try {
       v.gain.gain.cancelScheduledValues(t);
       v.gain.gain.setValueAtTime(Math.max(0.0001, v.gain.gain.value), t);
-      v.gain.gain.setTargetAtTime(0.0001, t, p.release);
-      v.osc.stop(t + p.release * 5 + 0.05);
+      v.gain.gain.setTargetAtTime(0.0001, t, p.releaseTau);
+      v.osc.stop(t + stopAfter);
     } catch (e) { /* already stopped */ }
     this.active.delete(id);
-    // disconnect later
     setTimeout(() => {
-      try { v.osc.disconnect(); v.gain.disconnect(); } catch (e) {}
-    }, (p.release * 5 + 0.1) * 1000);
+      try {
+        v.osc.disconnect();
+        v.filter.disconnect();
+        v.gain.disconnect();
+      } catch (e) {}
+    }, (stopAfter + 0.05) * 1000);
   }
 
   allOff() {
     const ids = [...this.active.keys()];
     for (const id of ids) this.noteOff(id);
+    this.lastPitch = null;
   }
 
   dispose() {
     this.allOff();
     try {
-      this.filter.disconnect();
       this.master.disconnect();
       this.limiter.disconnect();
     } catch (e) {}

@@ -57,12 +57,29 @@
   }
 
   function applyVoiceParams() {
+    const vol = +$('vol').value;
+    const cutoff = +$('cutoff').value;
+    const resonance = +$('resonance').value;
+    const envAmt = +$('env').value;
+    const accent = +$('accent').value;
+    const glideMs = +$('glide').value;
+    const releaseMs = +$('release').value;
+    $('volVal').textContent = Math.round(vol * 100) + '%';
+    $('cutoffVal').textContent = Math.round(cutoff) + ' Hz';
+    $('resonanceVal').textContent = resonance.toFixed(1);
+    $('envVal').textContent = Math.round(envAmt) + ' Hz';
+    $('accentVal').textContent = '×' + accent.toFixed(1);
+    $('glideVal').textContent = glideMs.toFixed(1) + ' ms';
+    $('releaseVal').textContent = Math.round(releaseMs) + ' ms';
     if (!voice) return;
-    voice.params.volume = +$('vol').value;
-    voice.params.cutoff = +$('cutoff').value;
+    voice.params.volume = vol;
+    voice.params.cutoff = cutoff;
+    voice.params.resonance = resonance;
+    voice.params.envAmt = envAmt;
+    voice.params.accent = accent;
+    voice.params.slideTau = glideMs / 1000;
+    voice.params.releaseTau = releaseMs / 1000;
     voice.applyParams();
-    $('volVal').textContent = Math.round(voice.params.volume * 100) + '%';
-    $('cutoffVal').textContent = Math.round(voice.params.cutoff) + ' Hz';
   }
 
   async function ensureMidiAccess() {
@@ -351,6 +368,11 @@
         key, scale, density, octLo, octHi, snap, outputDest, midi,
         vol: +$('vol').value,
         cutoff: +$('cutoff').value,
+        resonance: +$('resonance').value,
+        envAmt: +$('env').value,
+        accent: +$('accent').value,
+        glide: +$('glide').value,
+        release: +$('release').value,
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
     } catch (e) { /* ignore */ }
@@ -378,6 +400,11 @@
       if (d.midi) midi = Object.assign(midi, d.midi);
       if (d.vol != null) $('vol').value = d.vol;
       if (d.cutoff != null) $('cutoff').value = d.cutoff;
+      if (d.resonance != null) $('resonance').value = d.resonance;
+      if (d.envAmt != null) $('env').value = d.envAmt;
+      if (d.accent != null) $('accent').value = d.accent;
+      if (d.glide != null) $('glide').value = d.glide;
+      if (d.release != null) $('release').value = d.release;
     } catch (e) { /* ignore */ }
   }
 
@@ -502,10 +529,11 @@
       if (voice) voice.allOff();
     });
 
-    $('vol').addEventListener('input', () => { applyVoiceParams(); });
-    $('vol').addEventListener('change', () => { save(); });
-    $('cutoff').addEventListener('input', () => { applyVoiceParams(); });
-    $('cutoff').addEventListener('change', () => { save(); });
+    const audioIds = ['vol', 'cutoff', 'resonance', 'env', 'accent', 'glide', 'release'];
+    for (const id of audioIds) {
+      $(id).addEventListener('input', () => { applyVoiceParams(); });
+      $(id).addEventListener('change', () => { save(); });
+    }
 
     window.addEventListener('keydown', (e) => {
       if (e.target && /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
