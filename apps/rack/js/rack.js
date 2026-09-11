@@ -28,6 +28,8 @@
 
   const rack = {
     audioCtx: null,
+    bus: null,         // shared GainNode → single limiter → destination
+    limiter: null,
     running: false,
     bpm: 124,
     div: 4,            // shared clock: edges per beat (4 = 16ths)
@@ -42,10 +44,24 @@
   };
 
   function ensureAudio() {
-    if (rack.audioCtx) return;
-    const AC = window.AudioContext || window.webkitAudioContext;
-    if (!AC) return;
-    rack.audioCtx = new AC();
+    if (!rack.audioCtx) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      rack.audioCtx = new AC();
+      // Shared rack bus: one gentle limiter for all slots (avoids stacking
+      // per-voice DynamicsCompressors into destination).
+      rack.bus = rack.audioCtx.createGain();
+      rack.bus.gain.value = 1;
+      rack.limiter = rack.audioCtx.createDynamicsCompressor();
+      rack.limiter.threshold.value = -18;
+      rack.limiter.knee.value = 8;
+      rack.limiter.ratio.value = 3;
+      rack.limiter.attack.value = 0.01;
+      rack.limiter.release.value = 0.2;
+      rack.bus.connect(rack.limiter);
+      rack.limiter.connect(rack.audioCtx.destination);
+    }
+    // Always (re)attach voices for slots added/swapped after ctx creation.
     for (const s of rack.slots) s.ensureVoice();
   }
 
@@ -88,7 +104,7 @@
 
     s.ensureVoice = function () {
       if (!s.voice && rack.audioCtx) {
-        s.voice = new AcidVoice(rack.audioCtx);
+        s.voice = new AcidVoice(rack.audioCtx, rack.bus);
         s.applyVoiceParams();
       }
     };
@@ -476,7 +492,7 @@
 
     s.ensureVoice = function () {
       if (!s.voice && rack.audioCtx) {
-        s.voice = new DrumVoice(rack.audioCtx);
+        s.voice = new DrumVoice(rack.audioCtx, rack.bus);
         s.applyVoiceParams();
       }
     };
@@ -744,7 +760,7 @@
 
     s.ensureVoice = function () {
       if (!s.voice && rack.audioCtx) {
-        s.voice = new MelogenVoice(rack.audioCtx);
+        s.voice = new MelogenVoice(rack.audioCtx, rack.bus);
         s.applyVoiceParams();
       }
     };
@@ -1125,6 +1141,7 @@
     s.buildControls(controls);
     if (s.buildControlsStatics) s.buildControlsStatics();
     s.syncControls && s.syncControls();
+    if (rack.audioCtx) s.ensureVoice();
     return s;
   }
 
@@ -1138,6 +1155,7 @@
     fresh.div = slot.div;
     fresh.muted = slot.muted;
     rack.slots[slot.index] = fresh;
+    if (rack.audioCtx) fresh.ensureVoice();
     syncCellOrder();
     selectSlot(rack.selected);
     saveSoon();
@@ -1453,5 +1471,5 @@
   boot();
 
   // test surface
-  window.RackSlots = { createSlot, rack, doClock, clockBase, selectSlot, setCellName };
+  window.RackSlots = { createSlot, rack, doClock, clockBase, selectSlot, setCellName, ensureAudio, changeSlotApp };
 })();

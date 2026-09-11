@@ -13,7 +13,7 @@ function MG_midiToFreq(midi) {
 }
 
 class MelogenVoice {
-  constructor(ctx) {
+  constructor(ctx, destNode) {
     this.ctx = ctx;
     this.params = {
       volume: 0.28,
@@ -30,14 +30,18 @@ class MelogenVoice {
     this.master = ctx.createGain();
     this.master.gain.value = this.params.volume;
 
-    this.limiter = ctx.createDynamicsCompressor();
-    this.limiter.threshold.value = -8;
-    this.limiter.ratio.value = 8;
-    this.limiter.attack.value = 0.003;
-    this.limiter.release.value = 0.1;
-
-    this.master.connect(this.limiter);
-    this.limiter.connect(ctx.destination);
+    // Optional destNode (rack shared bus): skip per-voice limiter.
+    if (destNode) {
+      this.master.connect(destNode);
+    } else {
+      this.limiter = ctx.createDynamicsCompressor();
+      this.limiter.threshold.value = -8;
+      this.limiter.ratio.value = 8;
+      this.limiter.attack.value = 0.003;
+      this.limiter.release.value = 0.1;
+      this.master.connect(this.limiter);
+      this.limiter.connect(ctx.destination);
+    }
 
     this.active = new Map(); // id -> { osc, filter, gain, pitch }
     this.lastPitch = null;
@@ -133,7 +137,7 @@ class MelogenVoice {
     this.allOff();
     try {
       this.master.disconnect();
-      this.limiter.disconnect();
+      if (this.limiter) this.limiter.disconnect();
     } catch (e) {}
   }
 }

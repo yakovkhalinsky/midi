@@ -113,15 +113,36 @@ rack.outputDest = 'midi';
   tb.div = 1;
 }
 
-// audio destination: no midi bytes, voice exists once audio ctx is set
+// audio destination: ensureAudio creates shared bus + voices for all slots
 rack.outputDest = 'audio';
 midiSent.length = 0;
-rack.audioCtx = new AudioContext();
-tb.ensureVoice();
-dm.ensureVoice();
-check('voices created', !!tb.voice && !!dm.voice);
+tb.voice = null;
+dm.voice = null;
+RackSlots.ensureAudio();
+check('ensureAudio created audioCtx + bus', !!rack.audioCtx && !!rack.bus && !!rack.limiter);
+check('ensureAudio: two slots both have voice', !!tb.voice && !!dm.voice,
+  'tb=' + !!tb.voice + ' dm=' + !!dm.voice);
+check('voices route via shared bus (no per-voice limiter)', !tb.voice.limiter && !dm.voice.limiter);
 tb.onClock(300.0, 0.5);
 check('audio dest sends no midi', midiSent.length === 0, midiSent.length);
+
+// slot added/swapped after ctx exists still gets a voice
+{
+  const before = rack.slots[2];
+  before.silence && before.silence();
+  before.cell.remove();
+  before.controls.remove();
+  const mid = RackSlots.createSlot(2, 'tb3po');
+  rack.slots[2] = mid;
+  check('fresh slot while ctx exists has voice', !!mid.voice);
+  // restore empty for later melogen tests: tear down mid
+  mid.silence && mid.silence();
+  mid.cell.remove();
+  mid.controls.remove();
+  const empty = RackSlots.createSlot(2, null);
+  rack.slots[2] = empty;
+  RackSlots.selectSlot(0);
+}
 
 // OLED rendering into cell canvases
 tb.render();
@@ -193,12 +214,13 @@ check('drummap OLED rendered in cell', dm.cell.oledCtx.getImageData(32, 32, 1, 1
   check('melogen step advances', mg.step === (stepBefore + 1) % mg.params.length,
     stepBefore + '->' + mg.step);
 
-  // audio path
+  // audio path (ctx already from ensureAudio; createSlot also calls ensureVoice)
   rack.outputDest = 'audio';
   midiSent.length = 0;
-  if (!rack.audioCtx) rack.audioCtx = new AudioContext();
+  RackSlots.ensureAudio();
   mg.ensureVoice();
   check('melogen voice created', !!mg.voice);
+  check('melogen voice on shared bus', !!mg.voice && !mg.voice.limiter);
   mg.onClock(700, 0.125);
   check('melogen audio dest sends no midi', midiSent.length === 0, midiSent.length);
 
