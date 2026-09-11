@@ -9,7 +9,7 @@
  */
 
 class DrumVoice {
-  constructor(ctx) {
+  constructor(ctx, destNode) {
     this.ctx = ctx;
     this.params = {
       volume: 0.5,
@@ -23,14 +23,18 @@ class DrumVoice {
     this.master = ctx.createGain();
     this.master.gain.value = this.params.volume;
 
-    this.limiter = ctx.createDynamicsCompressor();
-    this.limiter.threshold.value = -8;
-    this.limiter.ratio.value = 12;
-    this.limiter.attack.value = 0.001;
-    this.limiter.release.value = 0.08;
-
-    this.master.connect(this.limiter);
-    this.limiter.connect(ctx.destination);
+    // Optional destNode (rack shared bus): skip per-voice limiter.
+    if (destNode) {
+      this.master.connect(destNode);
+    } else {
+      this.limiter = ctx.createDynamicsCompressor();
+      this.limiter.threshold.value = -8;
+      this.limiter.ratio.value = 12;
+      this.limiter.attack.value = 0.001;
+      this.limiter.release.value = 0.08;
+      this.master.connect(this.limiter);
+      this.limiter.connect(ctx.destination);
+    }
 
     // shared white-noise buffer
     const len = Math.floor(ctx.sampleRate * 1.5);

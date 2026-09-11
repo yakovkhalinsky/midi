@@ -18,7 +18,7 @@ function semisToFreq(semis) {
 }
 
 class AcidVoice {
-  constructor(ctx) {
+  constructor(ctx, destNode) {
     this.ctx = ctx;
     this.params = {
       volume: 0.25,
@@ -46,17 +46,23 @@ class AcidVoice {
     this.master = ctx.createGain();
     this.master.gain.value = this.params.volume;
 
-    this.limiter = ctx.createDynamicsCompressor();
-    this.limiter.threshold.value = -10;
-    this.limiter.ratio.value = 12;
-    this.limiter.attack.value = 0.002;
-    this.limiter.release.value = 0.1;
-
     this.osc.connect(this.filter);
     this.filter.connect(this.amp);
     this.amp.connect(this.master);
-    this.master.connect(this.limiter);
-    this.limiter.connect(ctx.destination);
+
+    // Optional destNode (e.g. rack shared bus): skip per-voice limiter.
+    // Omitted → standalone TB-3PO keeps limiter → destination.
+    if (destNode) {
+      this.master.connect(destNode);
+    } else {
+      this.limiter = ctx.createDynamicsCompressor();
+      this.limiter.threshold.value = -10;
+      this.limiter.ratio.value = 12;
+      this.limiter.attack.value = 0.002;
+      this.limiter.release.value = 0.1;
+      this.master.connect(this.limiter);
+      this.limiter.connect(ctx.destination);
+    }
 
     this.osc.start();
 
